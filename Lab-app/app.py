@@ -30,6 +30,11 @@ SUBTITULO_LABORATORIO = "Red de laboratorios lácteos"
 NOMBRE_SOFTWARE = "Sistema de Inventario de Laboratorio"
 VERSION_SOFTWARE = "v1.0"
 UNIDADES = ["L", "mL", "kg", "g", "mg"]
+VENTANAS = [
+    (7, "7 días"), (14, "14 días"), (30, "30 días"),
+    (90, "3 meses"), (180, "6 meses"), (365, "1 año"),
+    (730, "2 años"), (1825, "5 años"), (3650, "10 años"),
+]
 
 # Factor de cada unidad respecto a la unidad base de su familia (L para volumen, kg para masa)
 _FACTOR_UNIDAD = {"L": 1, "mL": 0.001, "kg": 1, "g": 0.001, "mg": 0.000001}
