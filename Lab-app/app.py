@@ -346,6 +346,37 @@ def _color_estado(val):
     return ""
 
 
+def elegir_lote(lotes, item, key_prefix):
+    """Muestra los lotes como tarjetas (marca, lote, envase, stock, vencimiento) en
+    vez de un desplegable de una sola línea. Devuelve el lote elegido."""
+    sel_key = f"{key_prefix}_lote_sel"
+    ids_disponibles = [l["id"] for l in lotes]
+    if st.session_state.get(sel_key) not in ids_disponibles:
+        st.session_state[sel_key] = ids_disponibles[0]
+
+    cols = st.columns(min(len(lotes), 3))
+    for idx, l in enumerate(lotes):
+        stock_l = lote_stock(l["id"], l["stock_inicial"])
+        elegido = st.session_state[sel_key] == l["id"]
+        with cols[idx % len(cols)]:
+            with st.container(border=True):
+                st.markdown(f"**{l['marca']}**")
+                st.caption(f"Lote {l['lote']} · {l['envase']}")
+                st.write(f"{stock_l} {item['unidad']}")
+                venc = etiqueta_vencimiento(l["fecha_vencimiento"])
+                if venc != "—":
+                    st.caption(venc)
+                if st.button(
+                    "✓ Elegido" if elegido else "Elegir",
+                    key=f"{key_prefix}_lotebtn_{l['id']}",
+                    type="primary" if elegido else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state[sel_key] = l["id"]
+                    st.rerun()
+    return next(l for l in lotes if l["id"] == st.session_state[sel_key])
+
+
 # --------------------------------------------------------------------------
 # UI
 # --------------------------------------------------------------------------
@@ -430,8 +461,6 @@ if "item_id" not in st.session_state:
     st.session_state.item_id = None
 if "confirmacion" not in st.session_state:
     st.session_state.confirmacion = None
-if "ultimo_analista" not in st.session_state:
-    st.session_state.ultimo_analista = None
 if "item_chequeo_id" not in st.session_state:
     st.session_state.item_chequeo_id = None
 if "confirmacion_chequeo" not in st.session_state:
@@ -442,9 +471,61 @@ if "item_gestion_id" not in st.session_state:
     st.session_state.item_gestion_id = None
 if "stock_modo_gestion" not in st.session_state:
     st.session_state.stock_modo_gestion = None
+if "analista_actual" not in st.session_state:
+    st.session_state.analista_actual = None
+
+
+def _elegir_perfil():
+    """Pantalla de '¿Quién sos?': una vez elegido, ese analista queda identificado
+    para toda la sesión (hasta que cierre el navegador o toque 'Cambiar de persona').
+    Reemplaza tener que elegir el nombre en cada formulario."""
+    personas_activas = [p for p in get_personas() if p["activo"]]
+    nombres_activos = [p["nombre"] for p in personas_activas]
+
+    if st.session_state.analista_actual in nombres_activos:
+        return True
+
+    st.session_state.analista_actual = None
+    st.markdown(f"<h2 style='text-align:center; margin-top:10vh;'>👤 ¿Quién sos?</h2>", unsafe_allow_html=True)
+    st.markdown(
+        f"<p style='text-align:center; color:#5C6B67;'>{NOMBRE_LABORATORIO}<br>"
+        f"Elegí tu nombre — vas a quedar identificado hasta que cierres el navegador o cambies de persona.</p>",
+        unsafe_allow_html=True,
+    )
+
+    if personas_activas:
+        cols = st.columns(3)
+        for idx, p in enumerate(personas_activas):
+            with cols[idx % 3]:
+                if st.button(p["nombre"], key=f"perfil_{p['id']}", use_container_width=True, type="primary"):
+                    st.session_state.analista_actual = p["nombre"]
+                    st.rerun()
+    else:
+        st.info("Todavía no hay ningún analista cargado. Agregate como el primero abajo.")
+
+    with st.expander("+ Soy nuevo/a, agregarme"):
+        nombre_nuevo = st.text_input("Tu nombre completo", key="nuevo_perfil_nombre")
+        if st.button("Agregar y continuar", key="nuevo_perfil_btn", type="primary"):
+            if nombre_nuevo.strip():
+                add_persona(nombre_nuevo.strip())
+                st.session_state.analista_actual = nombre_nuevo.strip()
+                st.rerun()
+            else:
+                st.error("Ingresá un nombre.")
+    return False
+
+
+if not _elegir_perfil():
+    st.stop()
 
 
 def render_home():
+    top1, top2 = st.columns([5, 1])
+    with top2:
+        st.caption(f"👤 {st.session_state.analista_actual}")
+        if st.button("Cambiar", use_container_width=True):
+            st.session_state.analista_actual = None
+            st.rerun()
     st.markdown(
         f"<div style='display:inline-block; background:#DCEAE7; color:#14504A; "
         f"font-size:0.75rem; font-weight:600; padding:3px 10px; border-radius:999px; margin-bottom:8px;'>"
@@ -588,21 +669,14 @@ def render_usar(familia_id):
 
     st.subheader(item["nombre"])
     lotes = [l for l in get_lotes(item["id"]) if lote_stock(l["id"], l["stock_inicial"]) > 0]
-    personas_activas = [p for p in get_personas() if p["activo"]]
 
     if not lotes:
         st.warning("Ningún lote de este ítem tiene stock disponible.")
-    elif not personas_activas:
-        st.warning("Todavía no hay analistas activos. Andá a la pestaña Personas para agregar alguno.")
     else:
-        lote_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']} ({lote_stock(l['id'], l['stock_inicial'])} {item['unidad']})": l for l in lotes}
-        lote_sel = st.selectbox("Lote / envase", list(lote_labels.keys()))
-        lote = lote_labels[lote_sel]
-
-        nombres_activos = [p["nombre"] for p in personas_activas]
-        ultimo = st.session_state.get("ultimo_analista")
-        idx_default = nombres_activos.index(ultimo) if ultimo in nombres_activos else 0
-        analista = st.selectbox("¿Quién usa el solvente?", nombres_activos, index=idx_default)
+        st.caption("¿Qué lote usás?")
+        lote = elegir_lote(lotes, item, key_prefix="usar")
+        analista = st.session_state.analista_actual
+        st.caption(f"👤 Registrado a nombre de: **{analista}**")
 
         cantidad = 0.0
         if lote["envase_valor"]:
@@ -639,7 +713,6 @@ def render_usar(familia_id):
                 st.error(f"No hay suficiente stock en ese lote (disponible: {disponible} {item['unidad']}).")
             else:
                 add_movimiento(item["id"], lote["id"], "out", cantidad, analista, nota)
-                st.session_state.ultimo_analista = analista
                 st.session_state.confirmacion = (
                     f"✅ Usaste {cantidad} {item['unidad']} de {item['nombre']} "
                     f"({lote['marca']} · lote {lote['lote']}) — registrado a nombre de {analista}."
@@ -678,16 +751,12 @@ def render_chequear(familia_id):
 
     st.subheader(item["nombre"])
     lotes = get_lotes(item["id"])
-    personas_activas = [p["nombre"] for p in get_personas() if p["activo"]]
 
     if not lotes:
         st.warning("Este ítem todavía no tiene lotes cargados. Andá a la pestaña Stock para agregar el primero.")
-    elif not personas_activas:
-        st.warning("Todavía no hay analistas activos. Andá a la pestaña Personas para agregar alguno.")
     else:
-        lote_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']}": l for l in lotes}
-        lote_sel = st.selectbox("Lote a chequear", list(lote_labels.keys()))
-        lote = lote_labels[lote_sel]
+        st.caption("¿Qué lote chequeás?")
+        lote = elegir_lote(lotes, item, key_prefix="chk")
         actual = lote_stock(lote["id"], lote["stock_inicial"])
 
         st.metric("El sistema dice", f"{actual} {item['unidad']}")
@@ -720,7 +789,8 @@ def render_chequear(familia_id):
         else:
             contado = st.number_input(f"Cantidad exacta ({item['unidad']})", min_value=0.0, step=0.1, key=f"chk_cantidad_exacta_{lote['id']}")
 
-        analista_chk = st.selectbox("¿Quién chequea?", personas_activas, key="chk_analista")
+        analista_chk = st.session_state.analista_actual
+        st.caption(f"👤 Registrado a nombre de: **{analista_chk}**")
 
         ult = ultimo_chequeo(lote["id"])
         if ult:
@@ -764,17 +834,13 @@ def render_stock(familia_id):
                                 file_name=f"stock_{familia_id}.csv", mime="text/csv")
 
     with st.expander("➕ Nuevo ítem"):
-        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+        c1, c2, c3 = st.columns([2, 1, 1])
         nombre = c1.text_input("Nombre (ej: Acetona HPLC)", key="new_item_nombre")
         unidad = c2.selectbox("Unidad", UNIDADES, key="new_item_unidad")
         minimo = c3.number_input("Stock mínimo", min_value=0.0, step=1.0, key="new_item_min")
-        personas_activas_stock = [p["nombre"] for p in get_personas() if p["activo"]]
-        creado_por = st.selectbox("¿Quién lo da de alta?", personas_activas_stock or ["—"], key="new_item_creador")
-        c4.write("")
-        c4.write("")
-        if c4.button("Guardar ítem"):
+        if st.button("Guardar ítem"):
             if nombre.strip():
-                add_item(familia_id, nombre.strip(), unidad, minimo, creado_por)
+                add_item(familia_id, nombre.strip(), unidad, minimo, st.session_state.analista_actual)
                 st.success(f"'{nombre}' creado. Ahora agregale un lote.")
                 st.rerun()
             else:
@@ -843,7 +909,6 @@ def render_gestion_item(item):
         st.session_state.stock_modo_gestion = "eliminar"
 
     modo = st.session_state.get("stock_modo_gestion")
-    personas_lote = [p["nombre"] for p in get_personas() if p["activo"]]
 
     if modo == "agregar":
         st.markdown("**➕ Agregar lote nuevo**")
@@ -869,7 +934,7 @@ def render_gestion_item(item):
             e4.error(f"{unidad_contenido} no se puede convertir a {item['unidad']} (familias distintas).")
             conversion_valida = False
 
-        creador_lote = st.selectbox("¿Quién carga este lote?", personas_lote or ["—"], key=f"creador_lote_{item['id']}")
+        st.caption(f"👤 Registrado a nombre de: **{st.session_state.analista_actual}**")
         tipo_carga_nuevo = st.selectbox("Tipo de carga", TIPOS_CARGA, key=f"tipocarga_{item['id']}")
 
         tiene_venc = st.checkbox("¿Tiene fecha de vencimiento?", key=f"tienevenc_{item['id']}")
@@ -892,7 +957,7 @@ def render_gestion_item(item):
             else:
                 add_lote(
                     item["id"], marca.strip(), lote_n.strip(), envase_desc.strip() or "—", total_calculado,
-                    creador_lote, envase_valor=contenido, envase_unidad=unidad_contenido,
+                    st.session_state.analista_actual, envase_valor=contenido, envase_unidad=unidad_contenido,
                     cantidad_envases_inicial=cant_envases, tipo_carga=tipo_carga_nuevo,
                     fecha_vencimiento=fecha_venc,
                 )
@@ -902,21 +967,17 @@ def render_gestion_item(item):
     elif modo == "cargar" and lotes:
         st.markdown("**📥 Cargar más stock a un lote existente**")
         st.caption("Para cuando llega más de lo mismo, sin dar de alta un lote nuevo.")
-        lote_carga_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']}": l for l in lotes}
-        lc_sel = st.selectbox("Lote", list(lote_carga_labels.keys()), key=f"cargalote_sel_{item['id']}")
-        lc = lote_carga_labels[lc_sel]
-        lc1, lc2, lc3 = st.columns(3)
+        lc = elegir_lote(lotes, item, key_prefix="cargalote")
+        lc1, lc2 = st.columns(2)
         cant_carga = lc1.number_input(f"Cantidad ({item['unidad']})", min_value=0.0, step=0.1, key=f"cantcarga_{item['id']}")
         tipo_carga_exist = lc2.selectbox("Tipo de carga", TIPOS_CARGA, key=f"tipocargaexist_{item['id']}")
-        analista_carga = lc3.selectbox("¿Quién carga?", personas_lote or ["—"], key=f"analistacarga_{item['id']}")
+        st.caption(f"👤 Registrado a nombre de: **{st.session_state.analista_actual}**")
         nota_carga = st.text_input("Nota (opcional)", key=f"notacarga_{item['id']}")
         if st.button("Registrar carga", key=f"btncarga_{item['id']}", type="primary"):
             if cant_carga <= 0:
                 st.error("Ingresá una cantidad válida.")
-            elif not personas_lote:
-                st.error("Agregá al menos un analista activo en la pestaña Personas.")
             else:
-                add_movimiento(item["id"], lc["id"], "in", cant_carga, analista_carga, nota_carga, categoria=tipo_carga_exist)
+                add_movimiento(item["id"], lc["id"], "in", cant_carga, st.session_state.analista_actual, nota_carga, categoria=tipo_carga_exist)
                 st.success(f"Cargaste {cant_carga} {item['unidad']} a ese lote.")
                 st.session_state.stock_modo_gestion = None
                 st.rerun()
@@ -1047,17 +1108,14 @@ def _render_tabla_movimientos(familia_id, tipo, tipo_label, nombre_archivo):
             "No se borra: queda visible marcado como anulado, con quién y cuándo, "
             "pero deja de contar para el stock y el consumo."
         )
-        personas_activas = [p["nombre"] for p in get_personas() if p["activo"]]
         if not anulables:
             st.caption("No hay nada anulable con estos filtros.")
-        elif not personas_activas:
-            st.warning("Agregá al menos un analista activo en la pestaña Personas.")
         else:
             etiqueta_sel = st.selectbox("Elegí cuál", list(anulables.keys()), key=f"anular_sel_{tipo}")
-            analista_anula = st.selectbox("¿Quién anula?", personas_activas, key=f"anular_analista_{tipo}")
+            st.caption(f"👤 Lo anula: **{st.session_state.analista_actual}**")
             motivo = st.text_input("Motivo (opcional)", key=f"anular_motivo_{tipo}")
             if st.button("Confirmar anulación", type="primary", key=f"anular_btn_{tipo}"):
-                anular_movimiento(anulables[etiqueta_sel], analista_anula, motivo)
+                anular_movimiento(anulables[etiqueta_sel], st.session_state.analista_actual, motivo)
                 st.success("Anulado. El stock ya está corregido.")
                 st.rerun()
 
