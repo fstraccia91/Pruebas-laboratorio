@@ -467,6 +467,8 @@ if "confirmacion_chequeo" not in st.session_state:
     st.session_state.confirmacion_chequeo = None
 if "seccion_activa" not in st.session_state:
     st.session_state.seccion_activa = None
+if "subseccion_activa" not in st.session_state:
+    st.session_state.subseccion_activa = None
 if "item_gestion_id" not in st.session_state:
     st.session_state.item_gestion_id = None
 if "stock_modo_gestion" not in st.session_state:
@@ -563,6 +565,7 @@ def render_home():
                 if st.button(f"{fam['icono']}  {fam['nombre']}", use_container_width=True, type="primary"):
                     st.session_state.familia_id = fam["id"]
                     st.session_state.seccion_activa = None
+                    st.session_state.subseccion_activa = None
                     st.rerun()
             else:
                 st.button(f"{fam['icono']}  {fam['nombre']}", use_container_width=True, disabled=True)
@@ -575,12 +578,20 @@ def render_home():
 def render_familia(familia_id):
     fam = next(f for f in get_familias() if f["id"] == familia_id)
     seccion = st.session_state.seccion_activa
+    subseccion = st.session_state.subseccion_activa
 
     top1, top2 = st.columns([1, 6])
     with top1:
-        label_volver = "← Menú" if seccion else "← Volver"
+        if subseccion:
+            label_volver = "← Menú"
+        elif seccion:
+            label_volver = "← Menú"
+        else:
+            label_volver = "← Volver"
         if st.button(label_volver):
-            if seccion:
+            if subseccion:
+                st.session_state.subseccion_activa = None
+            elif seccion:
                 st.session_state.seccion_activa = None
             else:
                 st.session_state.familia_id = None
@@ -593,10 +604,13 @@ def render_familia(familia_id):
         st.title(f"{fam['icono']} {fam['nombre']}")
         st.caption("LCyEE")
 
-    secciones = [
+    secciones_principales = [
         ("usar", "📲", "Usar"),
-        ("chequear", "🔍", "Chequear"),
-        ("stock", "🧫", "Stock"),
+        ("chequear", "🔍", "Chequear Stock"),
+        ("stock", "🧫", "Gestionar Stock"),
+        ("gestion_labo", "⚙️", "Gestión de Laboratorio"),
+    ]
+    secciones_labo = [
         ("movimientos", "📋", "Movimientos"),
         ("compras", "🛒", "Compras"),
         ("graficos", "📊", "Gráficos"),
@@ -612,22 +626,42 @@ def render_familia(familia_id):
         "personas": lambda: render_personas(),
     }
 
-    if seccion is None:
-        st.caption("Elegí qué querés hacer.")
+    def _menu_cuadrados(items, prefijo):
         cols = st.columns(4)
-        for idx, (sec_id, icon, label) in enumerate(secciones):
+        for idx, (sec_id, icon, label) in enumerate(items):
             with cols[idx % 4]:
                 with st.container(border=True):
                     st.markdown(
                         f"<div style='text-align:center; font-size:34px; margin-bottom:4px;'>{icon}</div>",
                         unsafe_allow_html=True,
                     )
-                    if st.button(label, key=f"seccion_{sec_id}", use_container_width=True, type="primary"):
-                        st.session_state.seccion_activa = sec_id
-                        st.rerun()
+                    if st.button(label, key=f"{prefijo}_{sec_id}", use_container_width=True, type="primary"):
+                        yield sec_id
+
+    if seccion is None:
+        st.caption("Elegí qué querés hacer.")
+        elegido = list(_menu_cuadrados(secciones_principales, "sec"))
+        if elegido:
+            st.session_state.seccion_activa = elegido[0]
+            st.rerun()
+
+    elif seccion == "gestion_labo":
+        if subseccion is None:
+            st.caption("Gestión de Laboratorio")
+            elegido = list(_menu_cuadrados(secciones_labo, "sub"))
+            if elegido:
+                st.session_state.subseccion_activa = elegido[0]
+                st.rerun()
+        else:
+            nombre_sub = next(lbl for sid, ico, lbl in secciones_labo if sid == subseccion)
+            icono_sub = next(ico for sid, ico, lbl in secciones_labo if sid == subseccion)
+            st.subheader(f"{icono_sub} {nombre_sub}")
+            renderers[subseccion]()
+
     else:
-        nombre_seccion = next(lbl for sid, ico, lbl in secciones if sid == seccion)
-        st.subheader(f"{dict((s[0], s[1]) for s in secciones)[seccion]} {nombre_seccion}")
+        nombre_seccion = next(lbl for sid, ico, lbl in secciones_principales if sid == seccion)
+        icono_seccion = next(ico for sid, ico, lbl in secciones_principales if sid == seccion)
+        st.subheader(f"{icono_seccion} {nombre_seccion}")
         renderers[seccion]()
 
     st.markdown(
