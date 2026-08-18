@@ -438,6 +438,10 @@ if "confirmacion_chequeo" not in st.session_state:
     st.session_state.confirmacion_chequeo = None
 if "seccion_activa" not in st.session_state:
     st.session_state.seccion_activa = None
+if "item_gestion_id" not in st.session_state:
+    st.session_state.item_gestion_id = None
+if "stock_modo_gestion" not in st.session_state:
+    st.session_state.stock_modo_gestion = None
 
 
 def render_home():
@@ -501,6 +505,8 @@ def render_familia(familia_id):
                 st.session_state.familia_id = None
             st.session_state.item_id = None
             st.session_state.item_chequeo_id = None
+            st.session_state.item_gestion_id = None
+            st.session_state.stock_modo_gestion = None
             st.rerun()
     with top2:
         st.title(f"{fam['icono']} {fam['nombre']}")
@@ -555,192 +561,193 @@ def render_usar(familia_id):
         st.success(st.session_state.confirmacion)
         st.session_state.confirmacion = None
 
-    st.caption("El QR de acceso te trae acá. Escribí el nombre del ítem o la marca que necesitás usar.")
-    query = st.text_input("Buscar", placeholder="Ej: acetona, o Merck", label_visibility="collapsed", key="buscar_usar")
-    items = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0]
-    if query:
-        q = query.lower()
-        items = [
-            i for i in items
-            if q in i["nombre"].lower() or any(q in l["marca"].lower() for l in get_lotes(i["id"]))
-        ]
+    item_sel_id = st.session_state.item_id
+    item = next((i for i in get_items(familia_id) if i["id"] == item_sel_id), None) if item_sel_id else None
 
-    cols = st.columns(3)
-    for i, item in enumerate(items):
-        stock = item_stock(item["id"])
-        with cols[i % 3]:
-            with st.container(border=True):
-                st.markdown(f"**{item['nombre']}**")
-                st.write(f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}")
-                if st.button("Seleccionar", key=f"sel_usar_{item['id']}", use_container_width=True):
-                    st.session_state.item_id = item["id"]
-
-    if not items:
-        st.info("No hay ítems con stock disponible que coincidan con la búsqueda. Si algo se agotó, reponelo desde la pestaña Stock.")
-
-    if st.session_state.item_id:
-        item = next((i for i in get_items(familia_id) if i["id"] == st.session_state.item_id), None)
-        if item and item_stock(item["id"]) > 0:
-            st.divider()
-            st.subheader(item["nombre"])
-            lotes = [l for l in get_lotes(item["id"]) if lote_stock(l["id"], l["stock_inicial"]) > 0]
-            personas_activas = [p for p in get_personas() if p["activo"]]
-
-            if not lotes:
-                st.warning("Ningún lote de este ítem tiene stock disponible.")
-            elif not personas_activas:
-                st.warning("Todavía no hay analistas activos. Andá a la pestaña Personas para agregar alguno.")
-            else:
-                lote_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']} ({lote_stock(l['id'], l['stock_inicial'])} {item['unidad']})": l for l in lotes}
-                lote_sel = st.selectbox("Lote / envase", list(lote_labels.keys()))
-                lote = lote_labels[lote_sel]
-
-                nombres_activos = [p["nombre"] for p in personas_activas]
-                ultimo = st.session_state.get("ultimo_analista")
-                idx_default = nombres_activos.index(ultimo) if ultimo in nombres_activos else 0
-                analista = st.selectbox("¿Quién usa el solvente?", nombres_activos, index=idx_default)
-
-                cantidad = 0.0
-                if lote["envase_valor"]:
-                    modo = st.radio(
-                        "¿Cómo cargás la cantidad?",
-                        [f"Envases enteros (c/u = {lote['envase_valor']:g} {lote['envase_unidad']})", f"Cantidad exacta en {item['unidad']}"],
-                        horizontal=True,
-                        key=f"modo_usar_{lote['id']}",
-                    )
-                    if modo.startswith("Envases"):
-                        envases_usados = st.number_input(
-                            "Envases usados", min_value=0.0, step=1.0, value=1.0, key=f"usar_n_envases_{lote['id']}"
-                        )
-                        cantidad = round(envases_usados * convertir_unidad(lote["envase_valor"], lote["envase_unidad"], item["unidad"]), 3)
-                        if envases_usados > 0:
-                            st.caption(f"= {cantidad} {item['unidad']}")
-                    else:
-                        cantidad = st.number_input(
-                            f"Cantidad ({item['unidad']})", min_value=0.0, step=0.1, key=f"usar_cantidad_exacta_{lote['id']}"
-                        )
-                else:
-                    st.caption("Este lote no tiene un volumen de envase definido — cargá la cantidad exacta.")
-                    cantidad = st.number_input(
-                        f"Cantidad ({item['unidad']})", min_value=0.0, step=0.1, key=f"usar_cantidad_sinenv_{lote['id']}"
-                    )
-
-                nota = st.text_input("Nota (opcional)")
-
-                if st.button("Registrar uso", type="primary"):
-                    disponible = lote_stock(lote["id"], lote["stock_inicial"])
-                    if cantidad <= 0:
-                        st.error("Ingresá una cantidad válida.")
-                    elif cantidad > disponible:
-                        st.error(f"No hay suficiente stock en ese lote (disponible: {disponible} {item['unidad']}).")
-                    else:
-                        add_movimiento(item["id"], lote["id"], "out", cantidad, analista, nota)
-                        st.session_state.ultimo_analista = analista
-                        st.session_state.confirmacion = (
-                            f"✅ Usaste {cantidad} {item['unidad']} de {item['nombre']} "
-                            f"({lote['marca']} · lote {lote['lote']}) — registrado a nombre de {analista}."
-                        )
-                        st.session_state.item_id = None
+    if item is None or item_stock(item["id"]) <= 0:
+        st.session_state.item_id = None
+        st.caption("Tocá el solvente que necesitás usar.")
+        items = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0]
+        if not items:
+            st.info("No hay ítems con stock disponible. Si algo se agotó, reponelo desde la pestaña Stock.")
+        cols = st.columns(3)
+        for i, it in enumerate(items):
+            stock = item_stock(it["id"])
+            with cols[i % 3]:
+                with st.container(border=True):
+                    st.markdown(f"**{it['nombre']}**")
+                    st.write(f"{stock} {it['unidad']} · {estado(stock, it['stock_minimo'])}")
+                    if st.button("Seleccionar", key=f"sel_usar_{it['id']}", use_container_width=True):
+                        st.session_state.item_id = it["id"]
                         st.rerun()
+        return
+
+    if st.button("← Elegir otro solvente"):
+        st.session_state.item_id = None
+        st.rerun()
+
+    st.subheader(item["nombre"])
+    lotes = [l for l in get_lotes(item["id"]) if lote_stock(l["id"], l["stock_inicial"]) > 0]
+    personas_activas = [p for p in get_personas() if p["activo"]]
+
+    if not lotes:
+        st.warning("Ningún lote de este ítem tiene stock disponible.")
+    elif not personas_activas:
+        st.warning("Todavía no hay analistas activos. Andá a la pestaña Personas para agregar alguno.")
+    else:
+        lote_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']} ({lote_stock(l['id'], l['stock_inicial'])} {item['unidad']})": l for l in lotes}
+        lote_sel = st.selectbox("Lote / envase", list(lote_labels.keys()))
+        lote = lote_labels[lote_sel]
+
+        nombres_activos = [p["nombre"] for p in personas_activas]
+        ultimo = st.session_state.get("ultimo_analista")
+        idx_default = nombres_activos.index(ultimo) if ultimo in nombres_activos else 0
+        analista = st.selectbox("¿Quién usa el solvente?", nombres_activos, index=idx_default)
+
+        cantidad = 0.0
+        if lote["envase_valor"]:
+            modo = st.radio(
+                "¿Cómo cargás la cantidad?",
+                [f"Envases enteros (c/u = {lote['envase_valor']:g} {lote['envase_unidad']})", f"Cantidad exacta en {item['unidad']}"],
+                horizontal=True,
+                key=f"modo_usar_{lote['id']}",
+            )
+            if modo.startswith("Envases"):
+                envases_usados = st.number_input(
+                    "Envases usados", min_value=0.0, step=1.0, value=1.0, key=f"usar_n_envases_{lote['id']}"
+                )
+                cantidad = round(envases_usados * convertir_unidad(lote["envase_valor"], lote["envase_unidad"], item["unidad"]), 3)
+                if envases_usados > 0:
+                    st.caption(f"= {cantidad} {item['unidad']}")
+            else:
+                cantidad = st.number_input(
+                    f"Cantidad ({item['unidad']})", min_value=0.0, step=0.1, key=f"usar_cantidad_exacta_{lote['id']}"
+                )
+        else:
+            st.caption("Este lote no tiene un volumen de envase definido — cargá la cantidad exacta.")
+            cantidad = st.number_input(
+                f"Cantidad ({item['unidad']})", min_value=0.0, step=0.1, key=f"usar_cantidad_sinenv_{lote['id']}"
+            )
+
+        nota = st.text_input("Nota (opcional)")
+
+        if st.button("Registrar uso", type="primary"):
+            disponible = lote_stock(lote["id"], lote["stock_inicial"])
+            if cantidad <= 0:
+                st.error("Ingresá una cantidad válida.")
+            elif cantidad > disponible:
+                st.error(f"No hay suficiente stock en ese lote (disponible: {disponible} {item['unidad']}).")
+            else:
+                add_movimiento(item["id"], lote["id"], "out", cantidad, analista, nota)
+                st.session_state.ultimo_analista = analista
+                st.session_state.confirmacion = (
+                    f"✅ Usaste {cantidad} {item['unidad']} de {item['nombre']} "
+                    f"({lote['marca']} · lote {lote['lote']}) — registrado a nombre de {analista}."
+                )
+                st.session_state.item_id = None
+                st.rerun()
 
 
 def render_chequear(familia_id):
-    st.caption("Contá físicamente lo que hay en el lote y corregí el sistema si no coincide. No cuenta como consumo.")
-    query = st.text_input("Buscar", placeholder="Ej: acetona, o Merck", label_visibility="collapsed", key="buscar_chequear")
-    items = get_items(familia_id)
-    if query:
-        q = query.lower()
-        items = [
-            i for i in items
-            if q in i["nombre"].lower() or any(q in l["marca"].lower() for l in get_lotes(i["id"]))
-        ]
-
-    cols = st.columns(3)
-    for i, item in enumerate(items):
-        stock = item_stock(item["id"])
-        with cols[i % 3]:
-            with st.container(border=True):
-                st.markdown(f"**{item['nombre']}**")
-                st.write(f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}")
-                if st.button("Seleccionar", key=f"sel_chk_{item['id']}", use_container_width=True):
-                    st.session_state.item_chequeo_id = item["id"]
-
-    if not items:
-        st.info("No hay ítems que coincidan con la búsqueda.")
-
-    item_chk_id = st.session_state.get("item_chequeo_id")
-    if item_chk_id:
-        item = next((i for i in get_items(familia_id) if i["id"] == item_chk_id), None)
-        if item:
-            st.divider()
-            st.subheader(item["nombre"])
-            lotes = get_lotes(item["id"])
-            personas_activas = [p["nombre"] for p in get_personas() if p["activo"]]
-
-            if not lotes:
-                st.warning("Este ítem todavía no tiene lotes cargados. Andá a la pestaña Stock para agregar el primero.")
-            elif not personas_activas:
-                st.warning("Todavía no hay analistas activos. Andá a la pestaña Personas para agregar alguno.")
-            else:
-                lote_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']}": l for l in lotes}
-                lote_sel = st.selectbox("Lote a chequear", list(lote_labels.keys()))
-                lote = lote_labels[lote_sel]
-                actual = lote_stock(lote["id"], lote["stock_inicial"])
-
-                st.metric("El sistema dice", f"{actual} {item['unidad']}")
-
-                modo = st.radio(
-                    "¿Cómo contaste?",
-                    ["Por envases (botellas, frascos, bidones...)", f"Cantidad exacta en {item['unidad']}"],
-                    horizontal=True,
-                    key=f"modo_chequeo_{lote['id']}",
-                )
-                if modo.startswith("Por envases"):
-                    ec1, ec2, ec3 = st.columns(3)
-                    envases_contados = ec1.number_input("N° de envases", min_value=0.0, step=1.0, value=1.0, key=f"chk_n_envases_{lote['id']}")
-                    vol_default = lote["envase_valor"] if lote["envase_valor"] else 0.0
-                    unidad_default = lote["envase_unidad"] if lote["envase_unidad"] else item["unidad"]
-                    volumen_envase = ec2.number_input("Volumen de cada uno", min_value=0.0, step=0.1, value=float(vol_default), key=f"chk_vol_envase_{lote['id']}")
-                    unidad_envase_chk = ec3.selectbox(
-                        "Unidad", UNIDADES,
-                        index=UNIDADES.index(unidad_default) if unidad_default in UNIDADES else 0,
-                        key=f"chk_unidad_envase_{lote['id']}",
-                    )
-                    if lote["envase_valor"] and (volumen_envase != lote["envase_valor"] or unidad_envase_chk != lote["envase_unidad"]):
-                        st.caption(f"⚠️ Distinto al tamaño habitual de este lote ({lote['envase_valor']:g} {lote['envase_unidad']}) — se usa el que pusiste acá.")
-                    try:
-                        contado = round(envases_contados * convertir_unidad(volumen_envase, unidad_envase_chk, item["unidad"]), 3)
-                        st.caption(f"= {contado} {item['unidad']}")
-                    except ValueError:
-                        st.error(f"{unidad_envase_chk} no se puede convertir a {item['unidad']}.")
-                        contado = 0.0
-                else:
-                    contado = st.number_input(f"Cantidad exacta ({item['unidad']})", min_value=0.0, step=0.1, key=f"chk_cantidad_exacta_{lote['id']}")
-
-                analista_chk = st.selectbox("¿Quién chequea?", personas_activas, key="chk_analista")
-
-                ult = ultimo_chequeo(lote["id"])
-                if ult:
-                    st.caption(f"Último chequeo: {ult['fecha'][:10]} ({ult['analista']})")
-                else:
-                    st.caption("Este lote nunca fue chequeado.")
-
-                if st.button("Confirmar chequeo", type="primary"):
-                    delta = registrar_chequeo(item["id"], lote["id"], contado, analista_chk)
-                    st.session_state.item_chequeo_id = None
-                    if delta == 0:
-                        st.session_state.confirmacion_chequeo = "Coincide con el sistema, no hizo falta ajustar."
-                    else:
-                        signo = "sobraba" if delta > 0 else "faltaba"
-                        st.session_state.confirmacion_chequeo = f"Ajustado: {signo} {abs(delta)} {item['unidad']} respecto al sistema."
-                    st.rerun()
-
     if st.session_state.get("confirmacion_chequeo"):
         st.success(st.session_state.confirmacion_chequeo)
         st.session_state.confirmacion_chequeo = None
 
+    item_chk_id = st.session_state.get("item_chequeo_id")
+    item = next((i for i in get_items(familia_id) if i["id"] == item_chk_id), None) if item_chk_id else None
+
+    if item is None:
+        st.session_state.item_chequeo_id = None
+        st.caption("Tocá el solvente que querés chequear.")
+        items = get_items(familia_id)
+        cols = st.columns(3)
+        for i, it in enumerate(items):
+            stock = item_stock(it["id"])
+            with cols[i % 3]:
+                with st.container(border=True):
+                    st.markdown(f"**{it['nombre']}**")
+                    st.write(f"{stock} {it['unidad']} · {estado(stock, it['stock_minimo'])}")
+                    if st.button("Seleccionar", key=f"sel_chk_{it['id']}", use_container_width=True):
+                        st.session_state.item_chequeo_id = it["id"]
+                        st.rerun()
+        return
+
+    if st.button("← Elegir otro solvente"):
+        st.session_state.item_chequeo_id = None
+        st.rerun()
+
+    st.subheader(item["nombre"])
+    lotes = get_lotes(item["id"])
+    personas_activas = [p["nombre"] for p in get_personas() if p["activo"]]
+
+    if not lotes:
+        st.warning("Este ítem todavía no tiene lotes cargados. Andá a la pestaña Stock para agregar el primero.")
+    elif not personas_activas:
+        st.warning("Todavía no hay analistas activos. Andá a la pestaña Personas para agregar alguno.")
+    else:
+        lote_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']}": l for l in lotes}
+        lote_sel = st.selectbox("Lote a chequear", list(lote_labels.keys()))
+        lote = lote_labels[lote_sel]
+        actual = lote_stock(lote["id"], lote["stock_inicial"])
+
+        st.metric("El sistema dice", f"{actual} {item['unidad']}")
+
+        modo = st.radio(
+            "¿Cómo contaste?",
+            ["Por envases (botellas, frascos, bidones...)", f"Cantidad exacta en {item['unidad']}"],
+            horizontal=True,
+            key=f"modo_chequeo_{lote['id']}",
+        )
+        if modo.startswith("Por envases"):
+            ec1, ec2, ec3 = st.columns(3)
+            envases_contados = ec1.number_input("N° de envases", min_value=0.0, step=1.0, value=1.0, key=f"chk_n_envases_{lote['id']}")
+            vol_default = lote["envase_valor"] if lote["envase_valor"] else 0.0
+            unidad_default = lote["envase_unidad"] if lote["envase_unidad"] else item["unidad"]
+            volumen_envase = ec2.number_input("Volumen de cada uno", min_value=0.0, step=0.1, value=float(vol_default), key=f"chk_vol_envase_{lote['id']}")
+            unidad_envase_chk = ec3.selectbox(
+                "Unidad", UNIDADES,
+                index=UNIDADES.index(unidad_default) if unidad_default in UNIDADES else 0,
+                key=f"chk_unidad_envase_{lote['id']}",
+            )
+            if lote["envase_valor"] and (volumen_envase != lote["envase_valor"] or unidad_envase_chk != lote["envase_unidad"]):
+                st.caption(f"⚠️ Distinto al tamaño habitual de este lote ({lote['envase_valor']:g} {lote['envase_unidad']}) — se usa el que pusiste acá.")
+            try:
+                contado = round(envases_contados * convertir_unidad(volumen_envase, unidad_envase_chk, item["unidad"]), 3)
+                st.caption(f"= {contado} {item['unidad']}")
+            except ValueError:
+                st.error(f"{unidad_envase_chk} no se puede convertir a {item['unidad']}.")
+                contado = 0.0
+        else:
+            contado = st.number_input(f"Cantidad exacta ({item['unidad']})", min_value=0.0, step=0.1, key=f"chk_cantidad_exacta_{lote['id']}")
+
+        analista_chk = st.selectbox("¿Quién chequea?", personas_activas, key="chk_analista")
+
+        ult = ultimo_chequeo(lote["id"])
+        if ult:
+            st.caption(f"Último chequeo: {ult['fecha'][:10]} ({ult['analista']})")
+        else:
+            st.caption("Este lote nunca fue chequeado.")
+
+        if st.button("Confirmar chequeo", type="primary"):
+            delta = registrar_chequeo(item["id"], lote["id"], contado, analista_chk)
+            st.session_state.item_chequeo_id = None
+            if delta == 0:
+                st.session_state.confirmacion_chequeo = "Coincide con el sistema, no hizo falta ajustar."
+            else:
+                signo = "sobraba" if delta > 0 else "faltaba"
+                st.session_state.confirmacion_chequeo = f"Ajustado: {signo} {abs(delta)} {item['unidad']} respecto al sistema."
+            st.rerun()
+
 
 def render_stock(familia_id):
+    item_gestion_id = st.session_state.get("item_gestion_id")
+    if item_gestion_id:
+        item = next((i for i in get_items(familia_id) if i["id"] == item_gestion_id), None)
+        if item:
+            render_gestion_item(item)
+            return
+        st.session_state.item_gestion_id = None
+
     items_export = get_items(familia_id)
     if items_export:
         filas_export = []
@@ -784,149 +791,181 @@ def render_stock(familia_id):
             "Mínimo": f"{i['stock_minimo']} {i['unidad']}",
             "Estado": estado(item_stock(i["id"]), i["stock_minimo"]),
         } for i in items_actuales])
-        st.dataframe(
+        st.caption("Tocá una fila para gestionar ese ítem (agregar lote, cargar stock, o eliminar).")
+        evento = st.dataframe(
             resumen.style.map(_color_estado, subset=["Estado"]),
             hide_index=True, use_container_width=True,
+            on_select="rerun", selection_mode="single-row", key="tabla_gestion_stock",
         )
+        filas_sel = evento.selection.rows if evento and evento.selection else []
+        if filas_sel:
+            st.session_state.item_gestion_id = items_actuales[filas_sel[0]]["id"]
+            st.session_state.stock_modo_gestion = None
+            st.rerun()
+    else:
+        st.info("Todavía no hay ítems cargados. Dalos de alta con '+ Nuevo ítem' arriba.")
 
-    for item in items_actuales:
-        stock = item_stock(item["id"])
-        lotes = get_lotes(item["id"])
-        with st.expander(f"{item['nombre']} — {stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}"):
-            if lotes:
-                df = pd.DataFrame([{
-                    "Marca": l["marca"], "Lote": l["lote"], "Envase": l["envase"],
-                    "Contenido c/u": (
-                        f"{l['envase_valor']:g} {l['envase_unidad']}" if l["envase_valor"] else "—"
-                    ),
-                    "Stock actual": lote_stock(l["id"], l["stock_inicial"]),
-                    "Vencimiento": etiqueta_vencimiento(l["fecha_vencimiento"]),
-                    "Último chequeo": (
-                        f"{ultimo_chequeo(l['id'])['fecha'][:10]} ({ultimo_chequeo(l['id'])['analista']})"
-                        if ultimo_chequeo(l["id"]) else "Nunca"
-                    ),
-                    "Dado de alta por": l["creado_por"] or "—",
-                } for l in lotes])
-                st.dataframe(df, hide_index=True, use_container_width=True)
 
-                with st.expander("🔖 Envases individuales (base para QR por envase, todavía no activo)"):
-                    st.caption(
-                        "Cada envase físico de estos lotes ya tiene un ID único generado — es la base que "
-                        "el día de mañana se va a codificar en un QR por envase. Por ahora es solo informativo: "
-                        "Usar, Chequear y Stock siguen funcionando a nivel lote, como hoy."
-                    )
-                    for l in lotes:
-                        envases_l = get_envases(l["id"])
-                        if not envases_l:
-                            continue
-                        st.markdown(f"**{l['marca']} · lote {l['lote']}** — {len(envases_l)} envase(s)")
-                        df_env = pd.DataFrame([{
-                            "N°": e["numero"], "Estado": e["estado"],
-                            "ID (futuro QR)": e["id"][:8] + "…",
-                            "Dado de alta por": e["creado_por"] or "—",
-                        } for e in envases_l])
-                        st.dataframe(df_env, hide_index=True, use_container_width=True)
+def render_gestion_item(item):
+    if st.button("← Volver a Stock"):
+        st.session_state.item_gestion_id = None
+        st.session_state.stock_modo_gestion = None
+        st.rerun()
 
-                with st.expander("🗑️ Eliminar un lote cargado por error"):
-                    lote_del_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']}": l for l in lotes}
-                    lote_del_sel = st.selectbox("Lote a eliminar", list(lote_del_labels.keys()), key=f"dellote_sel_{item['id']}")
-                    lote_del = lote_del_labels[lote_del_sel]
-                    n_mov = contar_movimientos_lote(lote_del["id"])
-                    if n_mov > 0:
-                        st.warning(
-                            f"Este lote tiene {n_mov} movimiento(s) cargado(s). Si lo eliminás, se borran también "
-                            "esos movimientos y no se puede deshacer. Si fue un uso real cargado por error, "
-                            "mejor anulalo desde la pestaña Movimientos en vez de borrar el lote."
-                        )
-                        confirmar = st.checkbox("Sí, quiero eliminar el lote y sus movimientos", key=f"confirm_dellote_{item['id']}")
-                    else:
-                        confirmar = True
-                    if st.button("Eliminar lote", key=f"dellote_btn_{item['id']}", disabled=not confirmar):
-                        eliminar_lote(lote_del["id"])
-                        st.rerun()
-            else:
-                st.caption("Sin lotes todavía.")
+    stock = item_stock(item["id"])
+    st.subheader(item["nombre"])
+    st.metric("Stock total", f"{stock} {item['unidad']}", help=estado(stock, item["stock_minimo"]))
 
-            c1, c2, c3 = st.columns(3)
-            marca = c1.text_input("Marca", key=f"marca_{item['id']}")
-            lote_n = c2.text_input("N° lote", key=f"lote_{item['id']}")
-            envase_desc = c3.text_input("Tipo de envase (ej: Bidón, Frasco)", key=f"envase_{item['id']}")
+    lotes = get_lotes(item["id"])
+    if lotes:
+        df = pd.DataFrame([{
+            "Marca": l["marca"], "Lote": l["lote"], "Envase": l["envase"],
+            "Contenido c/u": f"{l['envase_valor']:g} {l['envase_unidad']}" if l["envase_valor"] else "—",
+            "Stock actual": lote_stock(l["id"], l["stock_inicial"]),
+            "Vencimiento": etiqueta_vencimiento(l["fecha_vencimiento"]),
+            "Último chequeo": (
+                f"{ultimo_chequeo(l['id'])['fecha'][:10]} ({ultimo_chequeo(l['id'])['analista']})"
+                if ultimo_chequeo(l["id"]) else "Nunca"
+            ),
+            "Dado de alta por": l["creado_por"] or "—",
+        } for l in lotes])
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.caption("Sin lotes todavía.")
 
-            st.caption("¿Cuánto entró? Decime cuántos envases y cuánto contiene cada uno — calculo el total solo.")
-            e1, e2, e3, e4 = st.columns([1, 1, 1, 1.4])
-            cant_envases = e1.number_input("N° de envases", min_value=1.0, step=1.0, value=1.0, key=f"cantenv_{item['id']}")
-            contenido = e2.number_input("Contenido c/u", min_value=0.0, step=0.1, key=f"contenido_{item['id']}")
-            unidad_contenido = e3.selectbox(
-                "Unidad", UNIDADES,
-                index=UNIDADES.index(item["unidad"]) if item["unidad"] in UNIDADES else 0,
-                key=f"unidcont_{item['id']}",
+    st.divider()
+    b1, b2, b3 = st.columns(3)
+    if b1.button("➕ Agregar lote", use_container_width=True, type="primary"):
+        st.session_state.stock_modo_gestion = "agregar"
+    if b2.button("📥 Cargar a lote existente", use_container_width=True, disabled=not lotes):
+        st.session_state.stock_modo_gestion = "cargar"
+    if b3.button("🗑️ Eliminar lote", use_container_width=True, disabled=not lotes):
+        st.session_state.stock_modo_gestion = "eliminar"
+
+    modo = st.session_state.get("stock_modo_gestion")
+    personas_lote = [p["nombre"] for p in get_personas() if p["activo"]]
+
+    if modo == "agregar":
+        st.markdown("**➕ Agregar lote nuevo**")
+        c1, c2, c3 = st.columns(3)
+        marca = c1.text_input("Marca", key=f"marca_{item['id']}")
+        lote_n = c2.text_input("N° lote", key=f"lote_{item['id']}")
+        envase_desc = c3.text_input("Tipo de envase (ej: Bidón, Frasco)", key=f"envase_{item['id']}")
+
+        st.caption("¿Cuánto entró? Decime cuántos envases y cuánto contiene cada uno — calculo el total solo.")
+        e1, e2, e3, e4 = st.columns([1, 1, 1, 1.4])
+        cant_envases = e1.number_input("N° de envases", min_value=1.0, step=1.0, value=1.0, key=f"cantenv_{item['id']}")
+        contenido = e2.number_input("Contenido c/u", min_value=0.0, step=0.1, key=f"contenido_{item['id']}")
+        unidad_contenido = e3.selectbox(
+            "Unidad", UNIDADES,
+            index=UNIDADES.index(item["unidad"]) if item["unidad"] in UNIDADES else 0,
+            key=f"unidcont_{item['id']}",
+        )
+        try:
+            total_calculado = round(cant_envases * convertir_unidad(contenido, unidad_contenido, item["unidad"]), 3)
+            e4.metric("Total del lote", f"{total_calculado} {item['unidad']}")
+            conversion_valida = True
+        except ValueError:
+            e4.error(f"{unidad_contenido} no se puede convertir a {item['unidad']} (familias distintas).")
+            conversion_valida = False
+
+        creador_lote = st.selectbox("¿Quién carga este lote?", personas_lote or ["—"], key=f"creador_lote_{item['id']}")
+        tipo_carga_nuevo = st.selectbox("Tipo de carga", TIPOS_CARGA, key=f"tipocarga_{item['id']}")
+
+        tiene_venc = st.checkbox("¿Tiene fecha de vencimiento?", key=f"tienevenc_{item['id']}")
+        fecha_venc = None
+        if tiene_venc:
+            fecha_venc_dt = st.date_input(
+                "Fecha de vencimiento",
+                value=datetime.now().date() + timedelta(days=365),
+                key=f"fechavenc_{item['id']}",
             )
-            try:
-                total_calculado = round(cant_envases * convertir_unidad(contenido, unidad_contenido, item["unidad"]), 3)
-                e4.metric("Total del lote", f"{total_calculado} {item['unidad']}")
-                conversion_valida = True
-            except ValueError:
-                e4.error(f"{unidad_contenido} no se puede convertir a {item['unidad']} (familias distintas).")
-                conversion_valida = False
+            fecha_venc = fecha_venc_dt.isoformat()
 
-            personas_lote = [p["nombre"] for p in get_personas() if p["activo"]]
-            creador_lote = st.selectbox("¿Quién carga este lote?", personas_lote or ["—"], key=f"creador_lote_{item['id']}")
-            tipo_carga_nuevo = st.selectbox("Tipo de carga", TIPOS_CARGA, key=f"tipocarga_{item['id']}")
-
-            tiene_venc = st.checkbox("¿Tiene fecha de vencimiento?", key=f"tienevenc_{item['id']}")
-            fecha_venc = None
-            if tiene_venc:
-                fecha_venc_dt = st.date_input(
-                    "Fecha de vencimiento",
-                    value=datetime.now().date() + timedelta(days=365),
-                    key=f"fechavenc_{item['id']}",
-                )
-                fecha_venc = fecha_venc_dt.isoformat()
-
-            if st.button("+ Agregar lote", key=f"addlote_{item['id']}"):
-                if not (marca.strip() and lote_n.strip()):
-                    st.error("Completá marca y n° de lote.")
-                elif not conversion_valida:
-                    st.error("Elegí una unidad compatible con la del ítem antes de guardar.")
-                elif contenido <= 0:
-                    st.error("El contenido de cada envase tiene que ser mayor a 0.")
-                else:
-                    add_lote(
-                        item["id"], marca.strip(), lote_n.strip(), envase_desc.strip() or "—", total_calculado,
-                        creador_lote, envase_valor=contenido, envase_unidad=unidad_contenido,
-                        cantidad_envases_inicial=cant_envases, tipo_carga=tipo_carga_nuevo,
-                        fecha_vencimiento=fecha_venc,
-                    )
-                    st.rerun()
-
-            if lotes:
-                with st.expander("📥 Cargar más stock a un lote existente"):
-                    st.caption("Para cuando llega más de lo mismo, sin dar de alta un lote nuevo.")
-                    lote_carga_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']}": l for l in lotes}
-                    lc_sel = st.selectbox("Lote", list(lote_carga_labels.keys()), key=f"cargalote_sel_{item['id']}")
-                    lc = lote_carga_labels[lc_sel]
-                    lc1, lc2, lc3 = st.columns(3)
-                    cant_carga = lc1.number_input(f"Cantidad ({item['unidad']})", min_value=0.0, step=0.1, key=f"cantcarga_{item['id']}")
-                    tipo_carga_exist = lc2.selectbox("Tipo de carga", TIPOS_CARGA, key=f"tipocargaexist_{item['id']}")
-                    analista_carga = lc3.selectbox("¿Quién carga?", personas_lote or ["—"], key=f"analistacarga_{item['id']}")
-                    nota_carga = st.text_input("Nota (opcional)", key=f"notacarga_{item['id']}")
-                    if st.button("Registrar carga", key=f"btncarga_{item['id']}"):
-                        if cant_carga <= 0:
-                            st.error("Ingresá una cantidad válida.")
-                        elif not personas_lote:
-                            st.error("Agregá al menos un analista activo en la pestaña Personas.")
-                        else:
-                            add_movimiento(item["id"], lc["id"], "in", cant_carga, analista_carga, nota_carga, categoria=tipo_carga_exist)
-                            st.success(f"Cargaste {cant_carga} {item['unidad']} a ese lote.")
-                            st.rerun()
-
-            st.divider()
-            if contar_lotes_item(item["id"]) == 0:
-                if st.button("🗑️ Eliminar este ítem", key=f"delitem_{item['id']}"):
-                    eliminar_item(item["id"])
-                    st.rerun()
+        if st.button("Guardar lote", key=f"addlote_{item['id']}", type="primary"):
+            if not (marca.strip() and lote_n.strip()):
+                st.error("Completá marca y n° de lote.")
+            elif not conversion_valida:
+                st.error("Elegí una unidad compatible con la del ítem antes de guardar.")
+            elif contenido <= 0:
+                st.error("El contenido de cada envase tiene que ser mayor a 0.")
             else:
-                st.caption("Para eliminar este ítem, primero eliminá todos sus lotes (arriba).")
+                add_lote(
+                    item["id"], marca.strip(), lote_n.strip(), envase_desc.strip() or "—", total_calculado,
+                    creador_lote, envase_valor=contenido, envase_unidad=unidad_contenido,
+                    cantidad_envases_inicial=cant_envases, tipo_carga=tipo_carga_nuevo,
+                    fecha_vencimiento=fecha_venc,
+                )
+                st.session_state.stock_modo_gestion = None
+                st.rerun()
+
+    elif modo == "cargar" and lotes:
+        st.markdown("**📥 Cargar más stock a un lote existente**")
+        st.caption("Para cuando llega más de lo mismo, sin dar de alta un lote nuevo.")
+        lote_carga_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']}": l for l in lotes}
+        lc_sel = st.selectbox("Lote", list(lote_carga_labels.keys()), key=f"cargalote_sel_{item['id']}")
+        lc = lote_carga_labels[lc_sel]
+        lc1, lc2, lc3 = st.columns(3)
+        cant_carga = lc1.number_input(f"Cantidad ({item['unidad']})", min_value=0.0, step=0.1, key=f"cantcarga_{item['id']}")
+        tipo_carga_exist = lc2.selectbox("Tipo de carga", TIPOS_CARGA, key=f"tipocargaexist_{item['id']}")
+        analista_carga = lc3.selectbox("¿Quién carga?", personas_lote or ["—"], key=f"analistacarga_{item['id']}")
+        nota_carga = st.text_input("Nota (opcional)", key=f"notacarga_{item['id']}")
+        if st.button("Registrar carga", key=f"btncarga_{item['id']}", type="primary"):
+            if cant_carga <= 0:
+                st.error("Ingresá una cantidad válida.")
+            elif not personas_lote:
+                st.error("Agregá al menos un analista activo en la pestaña Personas.")
+            else:
+                add_movimiento(item["id"], lc["id"], "in", cant_carga, analista_carga, nota_carga, categoria=tipo_carga_exist)
+                st.success(f"Cargaste {cant_carga} {item['unidad']} a ese lote.")
+                st.session_state.stock_modo_gestion = None
+                st.rerun()
+
+    elif modo == "eliminar" and lotes:
+        st.markdown("**🗑️ Eliminar un lote cargado por error**")
+        lote_del_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']}": l for l in lotes}
+        lote_del_sel = st.selectbox("Lote a eliminar", list(lote_del_labels.keys()), key=f"dellote_sel_{item['id']}")
+        lote_del = lote_del_labels[lote_del_sel]
+        n_mov = contar_movimientos_lote(lote_del["id"])
+        if n_mov > 0:
+            st.warning(
+                f"Este lote tiene {n_mov} movimiento(s) cargado(s). Si lo eliminás, se borran también "
+                "esos movimientos y no se puede deshacer. Si fue un uso real cargado por error, "
+                "mejor anulalo desde la pestaña Movimientos en vez de borrar el lote."
+            )
+            confirmar = st.checkbox("Sí, quiero eliminar el lote y sus movimientos", key=f"confirm_dellote_{item['id']}")
+        else:
+            confirmar = True
+        if st.button("Eliminar lote", key=f"dellote_btn_{item['id']}", disabled=not confirmar, type="primary"):
+            eliminar_lote(lote_del["id"])
+            st.session_state.stock_modo_gestion = None
+            st.rerun()
+
+    if lotes:
+        with st.expander("🔖 Envases individuales (base para QR por envase, todavía no activo)"):
+            st.caption(
+                "Cada envase físico de estos lotes ya tiene un ID único generado — es la base que "
+                "el día de mañana se va a codificar en un QR por envase. Por ahora es solo informativo: "
+                "Usar, Chequear y Stock siguen funcionando a nivel lote, como hoy."
+            )
+            for l in lotes:
+                envases_l = get_envases(l["id"])
+                if not envases_l:
+                    continue
+                st.markdown(f"**{l['marca']} · lote {l['lote']}** — {len(envases_l)} envase(s)")
+                df_env = pd.DataFrame([{
+                    "N°": e["numero"], "Estado": e["estado"],
+                    "ID (futuro QR)": e["id"][:8] + "…",
+                    "Dado de alta por": e["creado_por"] or "—",
+                } for e in envases_l])
+                st.dataframe(df_env, hide_index=True, use_container_width=True)
+
+    if contar_lotes_item(item["id"]) == 0:
+        st.divider()
+        if st.button("🗑️ Eliminar este ítem"):
+            eliminar_item(item["id"])
+            st.session_state.item_gestion_id = None
+            st.rerun()
 
 
 def render_movimientos(familia_id):
