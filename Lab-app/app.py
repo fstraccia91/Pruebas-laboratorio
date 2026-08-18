@@ -13,6 +13,7 @@ La primera vez crea un archivo lab.db (SQLite) en esta misma carpeta con
 datos de ejemplo para la familia "Solventes".
 """
 
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
@@ -583,6 +584,35 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
+
+def _verificar_contraseña():
+    """Pantalla de acceso con clave. Necesaria en plataformas donde la app queda
+    visible públicamente (la clave sale de una variable de entorno, nunca del código).
+    Si no hay clave configurada (ej: corriendo en tu compu), no bloquea nada."""
+    clave_correcta = os.environ.get("APP_PASSWORD")
+    if not clave_correcta:
+        return True
+    if st.session_state.get("autenticado"):
+        return True
+
+    st.markdown(f"<h2 style='text-align:center; margin-top:15vh;'>🧪 {NOMBRE_SOFTWARE}</h2>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:center; color:#5C6B67;'>{NOMBRE_LABORATORIO}</p>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c2:
+        clave_ingresada = st.text_input("Contraseña del laboratorio", type="password", key="clave_acceso")
+        if st.button("Ingresar", use_container_width=True, type="primary"):
+            if clave_ingresada == clave_correcta:
+                st.session_state.autenticado = True
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta.")
+    return False
+
+
+if not _verificar_contraseña():
+    st.stop()
+
 init_db()
 
 if "familia_id" not in st.session_state:
