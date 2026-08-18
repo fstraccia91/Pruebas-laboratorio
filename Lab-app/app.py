@@ -5,24 +5,26 @@ App en Streamlit para controlar stock y consumo de insumos de laboratorio,
 organizados por "familias" (Solventes, y en el futuro Sales, Consumibles
 cromatográficos, etc.) que nunca se mezclan entre sí.
 
+Los datos viven en Supabase (Postgres), no en un archivo local — así
+sobreviven a los redeploys. Necesita dos variables de entorno:
+    SUPABASE_URL   → Project URL (Project Settings > API)
+    SUPABASE_KEY   → clave "anon public" (Project Settings > API)
+
 Cómo correrla localmente:
     pip install -r requirements.txt
+    (configurá SUPABASE_URL y SUPABASE_KEY como variables de entorno)
     streamlit run app.py
-
-La primera vez crea un archivo lab.db (SQLite) en esta misma carpeta con
-datos de ejemplo para la familia "Solventes".
 """
 
 import os
-import sqlite3
 import uuid
 from datetime import datetime, timedelta
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from supabase import create_client
 
-DB_PATH = "lab.db"
 NOMBRE_LABORATORIO = "Laboratorio de Cromatografía y Ensayos Especiales (LCyEE)"
 SUBTITULO_LABORATORIO = "Red de laboratorios lácteos"
 NOMBRE_SOFTWARE = "Sistema de Inventario de Laboratorio"
@@ -32,6 +34,7 @@ UNIDADES = ["L", "mL", "kg", "g", "mg"]
 # Factor de cada unidad respecto a la unidad base de su familia (L para volumen, kg para masa)
 _FACTOR_UNIDAD = {"L": 1, "mL": 0.001, "kg": 1, "g": 0.001, "mg": 0.000001}
 _FAMILIA_UNIDAD = {"L": "volumen", "mL": "volumen", "kg": "masa", "g": "masa", "mg": "masa"}
+TIPOS_CARGA = ["Compra", "Transferencia entre laboratorios", "Devolución", "Donación", "Otro"]
 
 
 def convertir_unidad(valor, desde, hasta):
@@ -41,201 +44,29 @@ def convertir_unidad(valor, desde, hasta):
     if _FAMILIA_UNIDAD.get(desde) != _FAMILIA_UNIDAD.get(hasta):
         raise ValueError(f"No se puede convertir {desde} a {hasta}: son de familias distintas.")
     return valor * _FACTOR_UNIDAD[desde] / _FACTOR_UNIDAD[hasta]
-VENTANAS = [
-    (7, "7 días"), (14, "14 días"), (30, "30 días"),
-    (90, "3 meses"), (180, "6 meses"), (365, "1 año"),
-    (730, "2 años"), (1825, "5 años"), (3650, "10 años"),
-]
+
 
 # --------------------------------------------------------------------------
-# Base de datos
+# Conexión a Supabase
 # --------------------------------------------------------------------------
 
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def _migrar_columnas_anulacion(conn):
-    """Agrega las columnas de anulación si la base ya existía de antes (sin perder datos)."""
-    cols = {r["name"] for r in conn.execute("PRAGMA table_info(movimientos)").fetchall()}
-    if "anulado" not in cols:
-        conn.execute("ALTER TABLE movimientos ADD COLUMN anulado INTEGER DEFAULT 0")
-        conn.execute("ALTER TABLE movimientos ADD COLUMN anulado_por TEXT")
-        conn.execute("ALTER TABLE movimientos ADD COLUMN anulado_fecha TEXT")
-        conn.execute("ALTER TABLE movimientos ADD COLUMN anulado_motivo TEXT")
-        conn.commit()
-    cols_items = {r["name"] for r in conn.execute("PRAGMA table_info(items)").fetchall()}
-    if "creado_por" not in cols_items:
-        conn.execute("ALTER TABLE items ADD COLUMN creado_por TEXT")
-        conn.commit()
-    cols_lotes = {r["name"] for r in conn.execute("PRAGMA table_info(lotes)").fetchall()}
-    if "creado_por" not in cols_lotes:
-        conn.execute("ALTER TABLE lotes ADD COLUMN creado_por TEXT")
-        conn.commit()
-    if "envase_valor" not in cols_lotes:
-        conn.execute("ALTER TABLE lotes ADD COLUMN envase_valor REAL")
-        conn.execute("ALTER TABLE lotes ADD COLUMN envase_unidad TEXT")
-        conn.execute("ALTER TABLE lotes ADD COLUMN cantidad_envases_inicial REAL")
-        conn.commit()
-    if "fecha_vencimiento" not in cols_lotes:
-        conn.execute("ALTER TABLE lotes ADD COLUMN fecha_vencimiento TEXT")
-        conn.commit()
-    cols_mov = {r["name"] for r in conn.execute("PRAGMA table_info(movimientos)").fetchall()}
-    if "categoria" not in cols_mov:
-        conn.execute("ALTER TABLE movimientos ADD COLUMN categoria TEXT")
-        conn.commit()
-
-    # Tabla de envases individuales: preparación para QR por envase (a futuro).
-    # No se usa todavía en Usar/Chequear/Stock — solo queda registrada, lista para cuando se active.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS envases (
-            id TEXT PRIMARY KEY, lote_id TEXT, item_id TEXT, numero INTEGER,
-            estado TEXT DEFAULT 'disponible', creado TEXT, creado_por TEXT
+@st.cache_resource
+def get_client():
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        st.error(
+            "Faltan las variables de entorno SUPABASE_URL y/o SUPABASE_KEY. "
+            "Configuralas antes de correr la app (ver Project Settings > API en Supabase)."
         )
-    """)
-    conn.commit()
-    _backfill_envases_individuales(conn)
-
-
-def _backfill_envases_individuales(conn):
-    """Genera los envases individuales de los lotes que ya existían y todavía no los tienen
-    (por ejemplo, lotes cargados antes de esta versión, o la data de ejemplo)."""
-    lotes = conn.execute(
-        "SELECT id, item_id, cantidad_envases_inicial, creado, creado_por FROM lotes "
-        "WHERE cantidad_envases_inicial IS NOT NULL AND cantidad_envases_inicial > 0"
-    ).fetchall()
-    for l in lotes:
-        ya_tiene = conn.execute("SELECT COUNT(*) c FROM envases WHERE lote_id=?", (l["id"],)).fetchone()["c"]
-        if ya_tiene > 0:
-            continue
-        n = int(l["cantidad_envases_inicial"])
-        for numero in range(1, n + 1):
-            conn.execute(
-                "INSERT INTO envases (id, lote_id, item_id, numero, estado, creado, creado_por) VALUES (?,?,?,?,?,?,?)",
-                (str(uuid.uuid4()), l["id"], l["item_id"], numero, "disponible", l["creado"], l["creado_por"]),
-            )
-    conn.commit()
+        st.stop()
+    return create_client(url, key)
 
 
 def init_db():
-    conn = get_conn()
-    conn.executescript("""
-    CREATE TABLE IF NOT EXISTS familias (
-        id TEXT PRIMARY KEY, nombre TEXT, icono TEXT, activo INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS items (
-        id TEXT PRIMARY KEY, familia_id TEXT, nombre TEXT, unidad TEXT,
-        stock_minimo REAL, creado TEXT
-    );
-    CREATE TABLE IF NOT EXISTS lotes (
-        id TEXT PRIMARY KEY, item_id TEXT, marca TEXT, lote TEXT,
-        envase TEXT, stock_inicial REAL, creado TEXT
-    );
-    CREATE TABLE IF NOT EXISTS movimientos (
-        id TEXT PRIMARY KEY, item_id TEXT, lote_id TEXT, tipo TEXT,
-        cantidad REAL, analista TEXT, nota TEXT, fecha TEXT
-    );
-    CREATE TABLE IF NOT EXISTS personas (
-        id TEXT PRIMARY KEY, nombre TEXT, activo INTEGER
-    );
-    """)
-    conn.commit()
-    _migrar_columnas_anulacion(conn)
-
-    # Familias base (se crean una sola vez)
-    existing = conn.execute("SELECT id FROM familias").fetchall()
-    if not existing:
-        conn.executemany(
-            "INSERT INTO familias VALUES (?,?,?,?)",
-            [
-                ("solventes", "Stock Solventes", "🧪", 1),
-                ("sales", "Stock Sales", "🧂", 0),
-                ("cromato", "Consumibles cromatográficos", "📦", 0),
-            ],
-        )
-        conn.commit()
-        seed_solventes(conn)
-    conn.close()
-
-
-def seed_solventes(conn):
-    now = datetime.now()
-    # (marca, lote, tipo de envase, cantidad de envases, contenido de cada uno, unidad)
-    items = [
-        ("Acetona HPLC", "L", 8, [
-            ("Merck", "L2401A", "Bidón", 1, 20, "L"),
-            ("Sintorgan", "S1187", "Frasco", 2, 4, "L"),
-        ]),
-        ("Acetona PA", "L", 6, [("Cicarelli", "C0932", "Bidón", 3, 6, "L")]),
-        ("Acetonitrilo HPLC", "L", 5, [("Merck", "M8821", "Bidón", 1, 15, "L")]),
-        ("Hexano", "L", 5, [("Sintorgan", "S2210", "Bidón", 1, 14, "L")]),
-        ("Metanol", "L", 6, [("Cicarelli", "C5541", "Frasco", 4, 5, "L")]),
-    ]
-    # Hexano queda sin reponer a propósito, para que en la demo se vea un caso real de "se agotó".
-    sin_reponer = {"Hexano"}
-
-    personas = ["M. Torres", "J. Paez", "L. Gimenez"]
-    for nombre_p in personas:
-        conn.execute("INSERT INTO personas VALUES (?,?,1)", (str(uuid.uuid4()), nombre_p))
-
-    import random
-    for nombre, unidad, minimo, lotes in items:
-        item_id = str(uuid.uuid4())
-        creado = (now - timedelta(days=40)).isoformat()
-        conn.execute(
-            "INSERT INTO items (id, familia_id, nombre, unidad, stock_minimo, creado, creado_por) VALUES (?,?,?,?,?,?,?)",
-            (item_id, "solventes", nombre, unidad, minimo, creado, "Sistema (datos de ejemplo)"),
-        )
-        allow_restock = nombre not in sin_reponer
-        for marca, lote, envase_desc, cant_envases, contenido, unidad_envase in lotes:
-            lote_id = str(uuid.uuid4())
-            stock_inicial = round(cant_envases * convertir_unidad(contenido, unidad_envase, unidad), 3)
-            conn.execute(
-                "INSERT INTO lotes (id, item_id, marca, lote, envase, stock_inicial, creado, creado_por, "
-                "envase_valor, envase_unidad, cantidad_envases_inicial) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (lote_id, item_id, marca, lote, envase_desc, stock_inicial, creado, "Sistema (datos de ejemplo)",
-                 contenido, unidad_envase, cant_envases),
-            )
-            _simular_movimientos_lote(conn, item_id, lote_id, stock_inicial, personas, now, allow_restock)
-            for numero in range(1, int(cant_envases) + 1):
-                conn.execute(
-                    "INSERT INTO envases (id, lote_id, item_id, numero, estado, creado, creado_por) VALUES (?,?,?,?,?,?,?)",
-                    (str(uuid.uuid4()), lote_id, item_id, numero, "disponible", creado, "Sistema (datos de ejemplo)"),
-                )
-    conn.commit()
-
-
-def _simular_movimientos_lote(conn, item_id, lote_id, stock_inicial, personas, now, allow_restock):
-    """Genera un historial de 'out' realistas (nunca deja el saldo negativo) con
-    reposiciones ('in') ocasionales, salvo que allow_restock sea False."""
-    import random
-    balance = stock_inicial
-    d = 55
-    while d >= 1:
-        fecha = (now - timedelta(days=d)).isoformat()
-        if balance <= 0:
-            if allow_restock:
-                restock = round(random.uniform(10, 20), 2)
-                conn.execute(
-                    "INSERT INTO movimientos (id, item_id, lote_id, tipo, cantidad, analista, nota, fecha, categoria) "
-                    "VALUES (?,?,?,?,?,?,?,?,?)",
-                    (str(uuid.uuid4()), item_id, lote_id, "in", restock,
-                     random.choice(personas), "Reposición de stock", fecha, "Compra"),
-                )
-                balance += restock
-            # si no se repone, simplemente no se generan más movimientos: queda en 0.
-        else:
-            cantidad = round(min(random.uniform(0.15, 1.1), balance), 2)
-            if cantidad > 0:
-                conn.execute(
-                    "INSERT INTO movimientos (id, item_id, lote_id, tipo, cantidad, analista, nota, fecha) VALUES (?,?,?,?,?,?,?,?)",
-                    (str(uuid.uuid4()), item_id, lote_id, "out", cantidad, random.choice(personas), "", fecha),
-                )
-                balance = round(balance - cantidad, 2)
-        d -= random.randint(1, 3)
+    """Con Supabase, las tablas ya se crean con el script SQL — acá solo
+    confirmamos que la conexión funciona."""
+    get_client()
 
 
 # --------------------------------------------------------------------------
@@ -243,153 +74,140 @@ def _simular_movimientos_lote(conn, item_id, lote_id, stock_inicial, personas, n
 # --------------------------------------------------------------------------
 
 def get_familias():
-    conn = get_conn()
-    rows = conn.execute("SELECT * FROM familias").fetchall()
-    conn.close()
-    return rows
+    sb = get_client()
+    res = sb.table("familias").select("*").order("orden").execute()
+    return res.data
 
 
 def get_items(familia_id):
-    conn = get_conn()
-    rows = conn.execute("SELECT * FROM items WHERE familia_id=? ORDER BY nombre", (familia_id,)).fetchall()
-    conn.close()
-    return rows
+    sb = get_client()
+    res = sb.table("items").select("*").eq("familia_id", familia_id).order("nombre").execute()
+    return res.data
 
 
 def get_lotes(item_id):
-    conn = get_conn()
-    rows = conn.execute("SELECT * FROM lotes WHERE item_id=?", (item_id,)).fetchall()
-    conn.close()
-    return rows
+    sb = get_client()
+    res = sb.table("lotes").select("*").eq("item_id", item_id).execute()
+    return res.data
 
 
 def get_movimientos(item_id=None):
-    conn = get_conn()
+    sb = get_client()
+    q = sb.table("movimientos").select("*")
     if item_id:
-        rows = conn.execute("SELECT * FROM movimientos WHERE item_id=? ORDER BY fecha DESC", (item_id,)).fetchall()
-    else:
-        rows = conn.execute("SELECT * FROM movimientos ORDER BY fecha DESC").fetchall()
-    conn.close()
-    return rows
+        q = q.eq("item_id", item_id)
+    res = q.order("fecha", desc=True).execute()
+    return res.data
 
 
 def item_stock(item_id):
-    conn = get_conn()
-    inicial = conn.execute("SELECT COALESCE(SUM(stock_inicial),0) s FROM lotes WHERE item_id=?", (item_id,)).fetchone()["s"]
-    entradas = conn.execute("SELECT COALESCE(SUM(cantidad),0) s FROM movimientos WHERE item_id=? AND tipo='in' AND anulado=0", (item_id,)).fetchone()["s"]
-    salidas = conn.execute("SELECT COALESCE(SUM(cantidad),0) s FROM movimientos WHERE item_id=? AND tipo='out' AND anulado=0", (item_id,)).fetchone()["s"]
-    ajustes = conn.execute("SELECT COALESCE(SUM(cantidad),0) s FROM movimientos WHERE item_id=? AND tipo='ajuste' AND anulado=0", (item_id,)).fetchone()["s"]
-    conn.close()
+    sb = get_client()
+    lotes = sb.table("lotes").select("stock_inicial").eq("item_id", item_id).execute().data
+    inicial = sum(l["stock_inicial"] or 0 for l in lotes)
+    movs = sb.table("movimientos").select("tipo,cantidad,anulado").eq("item_id", item_id).execute().data
+    entradas = sum(m["cantidad"] for m in movs if m["tipo"] == "in" and not m.get("anulado", False))
+    salidas = sum(m["cantidad"] for m in movs if m["tipo"] == "out" and not m.get("anulado", False))
+    ajustes = sum(m["cantidad"] for m in movs if m["tipo"] == "ajuste" and not m.get("anulado", False))
     return round(inicial + entradas - salidas + ajustes, 2)
 
 
 def lote_stock(lote_id, stock_inicial):
-    conn = get_conn()
-    entradas = conn.execute("SELECT COALESCE(SUM(cantidad),0) s FROM movimientos WHERE lote_id=? AND tipo='in' AND anulado=0", (lote_id,)).fetchone()["s"]
-    salidas = conn.execute("SELECT COALESCE(SUM(cantidad),0) s FROM movimientos WHERE lote_id=? AND tipo='out' AND anulado=0", (lote_id,)).fetchone()["s"]
-    ajustes = conn.execute("SELECT COALESCE(SUM(cantidad),0) s FROM movimientos WHERE lote_id=? AND tipo='ajuste' AND anulado=0", (lote_id,)).fetchone()["s"]
-    conn.close()
-    return round(stock_inicial + entradas - salidas + ajustes, 2)
+    sb = get_client()
+    movs = sb.table("movimientos").select("tipo,cantidad,anulado").eq("lote_id", lote_id).execute().data
+    entradas = sum(m["cantidad"] for m in movs if m["tipo"] == "in" and not m.get("anulado", False))
+    salidas = sum(m["cantidad"] for m in movs if m["tipo"] == "out" and not m.get("anulado", False))
+    ajustes = sum(m["cantidad"] for m in movs if m["tipo"] == "ajuste" and not m.get("anulado", False))
+    return round((stock_inicial or 0) + entradas - salidas + ajustes, 2)
 
 
 def ultimo_chequeo(lote_id):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT fecha, analista FROM movimientos WHERE lote_id=? AND tipo='ajuste' AND anulado=0 ORDER BY fecha DESC LIMIT 1",
-        (lote_id,),
-    ).fetchone()
-    conn.close()
-    return row
+    sb = get_client()
+    res = (
+        sb.table("movimientos").select("fecha,analista")
+        .eq("lote_id", lote_id).eq("tipo", "ajuste").eq("anulado", False)
+        .order("fecha", desc=True).limit(1).execute()
+    )
+    return res.data[0] if res.data else None
 
 
 def anular_movimiento(mov_id, analista, motivo=""):
     """Marca un movimiento como anulado. No se borra: queda visible en el historial
     con quién y cuándo lo anuló, pero deja de contar para stock y consumo."""
-    conn = get_conn()
-    conn.execute(
-        "UPDATE movimientos SET anulado=1, anulado_por=?, anulado_fecha=?, anulado_motivo=? WHERE id=?",
-        (analista, datetime.now().isoformat(), motivo, mov_id),
-    )
-    conn.commit()
-    conn.close()
+    sb = get_client()
+    sb.table("movimientos").update({
+        "anulado": True, "anulado_por": analista,
+        "anulado_fecha": datetime.now().isoformat(), "anulado_motivo": motivo,
+    }).eq("id", mov_id).execute()
 
 
 def contar_movimientos_lote(lote_id):
-    conn = get_conn()
-    n = conn.execute("SELECT COUNT(*) c FROM movimientos WHERE lote_id=?", (lote_id,)).fetchone()["c"]
-    conn.close()
-    return n
+    sb = get_client()
+    res = sb.table("movimientos").select("id", count="exact").eq("lote_id", lote_id).execute()
+    return res.count or 0
 
 
 def eliminar_lote(lote_id):
     """Borra el lote, sus movimientos y sus envases individuales asociados. A diferencia
     de anular, esto es irreversible: pensado para altas cargadas por error."""
-    conn = get_conn()
-    conn.execute("DELETE FROM movimientos WHERE lote_id=?", (lote_id,))
-    conn.execute("DELETE FROM envases WHERE lote_id=?", (lote_id,))
-    conn.execute("DELETE FROM lotes WHERE id=?", (lote_id,))
-    conn.commit()
-    conn.close()
+    sb = get_client()
+    sb.table("movimientos").delete().eq("lote_id", lote_id).execute()
+    sb.table("envases").delete().eq("lote_id", lote_id).execute()
+    sb.table("lotes").delete().eq("id", lote_id).execute()
 
 
 def contar_lotes_item(item_id):
-    conn = get_conn()
-    n = conn.execute("SELECT COUNT(*) c FROM lotes WHERE item_id=?", (item_id,)).fetchone()["c"]
-    conn.close()
-    return n
+    sb = get_client()
+    res = sb.table("lotes").select("id", count="exact").eq("item_id", item_id).execute()
+    return res.count or 0
 
 
 def eliminar_item(item_id):
     """Borra el ítem. Solo se debe llamar si ya no tiene lotes (se valida antes en la UI)."""
-    conn = get_conn()
-    conn.execute("DELETE FROM movimientos WHERE item_id=?", (item_id,))
-    conn.execute("DELETE FROM envases WHERE item_id=?", (item_id,))
-    conn.execute("DELETE FROM items WHERE id=?", (item_id,))
-    conn.commit()
-    conn.close()
+    sb = get_client()
+    sb.table("movimientos").delete().eq("item_id", item_id).execute()
+    sb.table("envases").delete().eq("item_id", item_id).execute()
+    sb.table("items").delete().eq("id", item_id).execute()
 
 
 def registrar_chequeo(item_id, lote_id, stock_contado, analista, nota=""):
     """Ajusta el lote al valor contado físicamente. No cuenta como consumo."""
     stock_sistema = lote_stock(lote_id, get_lote_inicial(lote_id))
     delta = round(stock_contado - stock_sistema, 2)
-    conn = get_conn()
-    conn.execute(
-        "INSERT INTO movimientos (id, item_id, lote_id, tipo, cantidad, analista, nota, fecha) VALUES (?,?,?,?,?,?,?,?)",
-        (str(uuid.uuid4()), item_id, lote_id, "ajuste", delta, analista,
-         nota or f"Chequeo de inventario (sistema: {stock_sistema}, contado: {stock_contado})",
-         datetime.now().isoformat()),
+    add_movimiento(
+        item_id, lote_id, "ajuste", delta, analista,
+        nota or f"Chequeo de inventario (sistema: {stock_sistema}, contado: {stock_contado})",
     )
-    conn.commit()
-    conn.close()
     return delta
 
 
 def get_lote_inicial(lote_id):
-    conn = get_conn()
-    row = conn.execute("SELECT stock_inicial FROM lotes WHERE id=?", (lote_id,)).fetchone()
-    conn.close()
-    return row["stock_inicial"] if row else 0
+    sb = get_client()
+    res = sb.table("lotes").select("stock_inicial").eq("id", lote_id).execute()
+    return res.data[0]["stock_inicial"] if res.data else 0
 
 
 def daily_consumption(item_id, days):
-    conn = get_conn()
+    sb = get_client()
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-    total = conn.execute(
-        "SELECT COALESCE(SUM(cantidad),0) s FROM movimientos WHERE item_id=? AND tipo='out' AND anulado=0 AND fecha>=?",
-        (item_id, cutoff),
-    ).fetchone()["s"]
-    conn.close()
+    res = (
+        sb.table("movimientos").select("cantidad")
+        .eq("item_id", item_id).eq("tipo", "out").eq("anulado", False)
+        .gte("fecha", cutoff).execute()
+    )
+    total = sum(m["cantidad"] for m in res.data)
     return total / days
 
 
 def stock_series(item, lotes):
-    conn = get_conn()
-    movs = conn.execute("SELECT * FROM movimientos WHERE item_id=? AND anulado=0 ORDER BY fecha ASC", (item["id"],)).fetchall()
-    conn.close()
-    inicial = sum(l["stock_inicial"] for l in lotes)
+    sb = get_client()
+    movs = (
+        sb.table("movimientos").select("*")
+        .eq("item_id", item["id"]).eq("anulado", False)
+        .order("fecha").execute()
+    ).data
+    inicial = sum(l["stock_inicial"] or 0 for l in lotes)
     running = inicial
-    rows = [{"fecha": item["creado"][:10], "stock": running}]
+    rows = [{"fecha": str(item["creado"])[:10], "stock": running}]
     for m in movs:
         if m["tipo"] == "in":
             running += m["cantidad"]
@@ -397,21 +215,17 @@ def stock_series(item, lotes):
             running -= m["cantidad"]
         else:  # ajuste: la cantidad ya viene con signo (positivo o negativo)
             running += m["cantidad"]
-        rows.append({"fecha": m["fecha"][:10], "stock": round(running, 2)})
+        rows.append({"fecha": str(m["fecha"])[:10], "stock": round(running, 2)})
     return pd.DataFrame(rows)
 
 
 def add_item(familia_id, nombre, unidad, minimo, creado_por=""):
-    conn = get_conn()
-    conn.execute(
-        "INSERT INTO items (id, familia_id, nombre, unidad, stock_minimo, creado, creado_por) VALUES (?,?,?,?,?,?,?)",
-        (str(uuid.uuid4()), familia_id, nombre, unidad, minimo, datetime.now().isoformat(), creado_por),
-    )
-    conn.commit()
-    conn.close()
-
-
-TIPOS_CARGA = ["Compra", "Transferencia entre laboratorios", "Devolución", "Donación", "Otro"]
+    sb = get_client()
+    sb.table("items").insert({
+        "id": str(uuid.uuid4()), "familia_id": familia_id, "nombre": nombre,
+        "unidad": unidad, "stock_minimo": minimo,
+        "creado": datetime.now().isoformat(), "creado_por": creado_por,
+    }).execute()
 
 
 def add_lote(item_id, marca, lote, envase, stock_inicial, creado_por="",
@@ -419,16 +233,15 @@ def add_lote(item_id, marca, lote, envase, stock_inicial, creado_por="",
              tipo_carga="Compra", fecha_vencimiento=None):
     """Crea el lote (con stock_inicial=0) y registra la carga inicial como un
     movimiento real de tipo 'in', para que quede visible en Movimientos > Cargas."""
+    sb = get_client()
     lote_id = str(uuid.uuid4())
-    conn = get_conn()
-    conn.execute(
-        "INSERT INTO lotes (id, item_id, marca, lote, envase, stock_inicial, creado, creado_por, "
-        "envase_valor, envase_unidad, cantidad_envases_inicial, fecha_vencimiento) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        (lote_id, item_id, marca, lote, envase, 0, datetime.now().isoformat(),
-         creado_por, envase_valor, envase_unidad, cantidad_envases_inicial, fecha_vencimiento),
-    )
-    conn.commit()
-    conn.close()
+    sb.table("lotes").insert({
+        "id": lote_id, "item_id": item_id, "marca": marca, "lote": lote, "envase": envase,
+        "stock_inicial": 0, "creado": datetime.now().isoformat(), "creado_por": creado_por,
+        "envase_valor": envase_valor, "envase_unidad": envase_unidad,
+        "cantidad_envases_inicial": cantidad_envases_inicial,
+        "fecha_vencimiento": fecha_vencimiento,
+    }).execute()
     if stock_inicial > 0:
         nota = f"Alta de lote ({marca} · lote {lote})"
         add_movimiento(item_id, lote_id, "in", stock_inicial, creado_por, nota, categoria=tipo_carga)
@@ -441,7 +254,7 @@ def dias_para_vencer(fecha_vencimiento):
     """Días que faltan para vencer (negativo si ya venció). None si no tiene fecha cargada."""
     if not fecha_vencimiento:
         return None
-    venc = datetime.fromisoformat(fecha_vencimiento).date()
+    venc = datetime.fromisoformat(str(fecha_vencimiento)).date()
     return (venc - datetime.now().date()).days
 
 
@@ -449,7 +262,7 @@ def etiqueta_vencimiento(fecha_vencimiento):
     dias = dias_para_vencer(fecha_vencimiento)
     if dias is None:
         return "—"
-    fecha_fmt = datetime.fromisoformat(fecha_vencimiento).strftime("%d/%m/%Y")
+    fecha_fmt = datetime.fromisoformat(str(fecha_vencimiento)).strftime("%d/%m/%Y")
     if dias < 0:
         return f"🔴 Vencido ({fecha_fmt})"
     if dias <= 60:
@@ -460,61 +273,52 @@ def etiqueta_vencimiento(fecha_vencimiento):
 def _crear_envases_individuales(lote_id, item_id, cantidad, creado_por):
     """Crea un registro por cada envase físico del lote, con un ID único —
     ese ID es lo que el día de mañana se codifica en el QR de cada envase."""
-    conn = get_conn()
+    sb = get_client()
     ahora = datetime.now().isoformat()
-    for numero in range(1, cantidad + 1):
-        conn.execute(
-            "INSERT INTO envases (id, lote_id, item_id, numero, estado, creado, creado_por) VALUES (?,?,?,?,?,?,?)",
-            (str(uuid.uuid4()), lote_id, item_id, numero, "disponible", ahora, creado_por),
-        )
-    conn.commit()
-    conn.close()
+    filas = [
+        {"id": str(uuid.uuid4()), "lote_id": lote_id, "item_id": item_id, "numero": numero,
+         "estado": "disponible", "creado": ahora, "creado_por": creado_por}
+        for numero in range(1, cantidad + 1)
+    ]
+    if filas:
+        sb.table("envases").insert(filas).execute()
 
 
 def get_envases(lote_id):
-    conn = get_conn()
-    rows = conn.execute("SELECT * FROM envases WHERE lote_id=? ORDER BY numero", (lote_id,)).fetchall()
-    conn.close()
-    return rows
+    sb = get_client()
+    res = sb.table("envases").select("*").eq("lote_id", lote_id).order("numero").execute()
+    return res.data
 
 
 def add_movimiento(item_id, lote_id, tipo, cantidad, analista, nota, categoria=None):
-    conn = get_conn()
-    conn.execute(
-        "INSERT INTO movimientos (id, item_id, lote_id, tipo, cantidad, analista, nota, fecha, categoria) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (str(uuid.uuid4()), item_id, lote_id, tipo, cantidad, analista, nota, datetime.now().isoformat(), categoria),
-    )
-    conn.commit()
-    conn.close()
+    sb = get_client()
+    sb.table("movimientos").insert({
+        "id": str(uuid.uuid4()), "item_id": item_id, "lote_id": lote_id, "tipo": tipo,
+        "cantidad": cantidad, "analista": analista, "nota": nota,
+        "fecha": datetime.now().isoformat(), "categoria": categoria,
+        "anulado": False, "anulado_por": None, "anulado_fecha": None, "anulado_motivo": None,
+    }).execute()
 
 
 def get_personas():
-    conn = get_conn()
-    rows = conn.execute("SELECT * FROM personas ORDER BY nombre").fetchall()
-    conn.close()
-    return rows
+    sb = get_client()
+    res = sb.table("personas").select("*").order("nombre").execute()
+    return res.data
 
 
 def add_persona(nombre):
-    conn = get_conn()
-    conn.execute("INSERT INTO personas VALUES (?,?,1)", (str(uuid.uuid4()), nombre))
-    conn.commit()
-    conn.close()
+    sb = get_client()
+    sb.table("personas").insert({"id": str(uuid.uuid4()), "nombre": nombre, "activo": True}).execute()
 
 
 def toggle_persona(pid, activo):
-    conn = get_conn()
-    conn.execute("UPDATE personas SET activo=? WHERE id=?", (0 if activo else 1, pid))
-    conn.commit()
-    conn.close()
+    sb = get_client()
+    sb.table("personas").update({"activo": not activo}).eq("id", pid).execute()
 
 
 def delete_persona(pid):
-    conn = get_conn()
-    conn.execute("DELETE FROM personas WHERE id=?", (pid,))
-    conn.commit()
-    conn.close()
+    sb = get_client()
+    sb.table("personas").delete().eq("id", pid).execute()
 
 
 def estado(stock, minimo):
@@ -673,6 +477,9 @@ def render_home():
             else:
                 st.button(f"{fam['icono']}  {fam['nombre']}", use_container_width=True, disabled=True)
                 st.caption("Próximamente")
+
+    url_conectada = os.environ.get("SUPABASE_URL", "(sin configurar)")
+    st.caption(f"🔌 Base de datos conectada: {url_conectada}")
 
 
 def render_familia(familia_id):
@@ -1164,7 +971,7 @@ def _render_tabla_movimientos(familia_id, tipo, tipo_label, nombre_archivo):
             signo = "+" if m["cantidad"] >= 0 else ""
             cant_label = f"{signo}{m['cantidad']} {item['unidad']}"
 
-        if m["anulado"]:
+        if m.get("anulado", False):
             estado_label = f"❌ Anulado por {m['anulado_por']} ({m['anulado_fecha'][:10]})"
         else:
             estado_label = ""
