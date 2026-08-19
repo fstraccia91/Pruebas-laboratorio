@@ -36,7 +36,7 @@ from datos import (
 from logica import (
     NOMBRE_LABORATORIO, SUBTITULO_LABORATORIO, NOMBRE_SOFTWARE, VERSION_SOFTWARE,
     UNIDADES, VENTANAS, TIPOS_CARGA, RIESGOS_GHS, convertir_unidad, dias_para_vencer,
-    etiqueta_vencimiento, estado, _color_estado,
+    etiqueta_vencimiento, estado, _color_estado, etiqueta_identificador,
 )
 
 
@@ -321,13 +321,14 @@ def fila_titulo_pictogramas(titulo_html, riesgos_str, tamano_picto=24):
 
 
 def tarjeta_item(item, key_prefix):
-    """Tarjeta de ítem para Usar/Chequear: nombre + CAS a la izquierda, stock +
-    estado debajo, pictogramas siempre a la derecha. Devuelve True si se tocó
-    'Seleccionar'."""
+    """Tarjeta de ítem para Usar/Chequear: nombre + CAS/N° de parte a la
+    izquierda, stock + estado debajo, pictogramas siempre a la derecha.
+    Devuelve True si se tocó 'Seleccionar'."""
     stock = item_stock(item["id"])
     nombre_html = f"<span style='font-weight:600; font-size:0.95rem;'>{item['nombre']}</span>"
     if item.get("cas"):
-        nombre_html += f" <span style='color:#5C6B67; font-weight:400; font-size:0.95rem;'>· CAS {item['cas']}</span>"
+        etiqueta_id = etiqueta_identificador(item.get("familia_id"))
+        nombre_html += f" <span style='color:#5C6B67; font-weight:400; font-size:0.95rem;'>· {etiqueta_id} {item['cas']}</span>"
 
     with st.container(border=True):
         fila_titulo_pictogramas(nombre_html, item.get("riesgos"))
@@ -652,6 +653,7 @@ def render_usar(familia_id):
         st.session_state.item_id = None
         st.caption("Tocá el solvente que necesitás usar.")
         items = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0]
+        items = filtrar_por_categoria(items, key_prefix="usar")
         if not items:
             st.info("No hay ítems con stock disponible. Si algo se agotó, reponelo desde la pestaña Stock.")
         cols = st.columns(3)
@@ -737,6 +739,7 @@ def render_chequear(familia_id):
         st.session_state.item_chequeo_id = None
         st.caption("Tocá el solvente que querés chequear.")
         items = get_items(familia_id)
+        items = filtrar_por_categoria(items, key_prefix="chk")
         cols = st.columns(3)
         for i, it in enumerate(items):
             with cols[i % 3]:
@@ -814,6 +817,20 @@ def render_chequear(familia_id):
             st.rerun()
 
 
+def filtrar_por_categoria(items, key_prefix):
+    """Si los ítems tienen más de una categoría distinta, muestra un filtro
+    para elegir cuál ver (útil cuando hay muchos ítems, como en Consumibles).
+    Si todos comparten la misma categoría (o no tienen), no muestra nada."""
+    categorias = sorted({i["categoria"] for i in items if i.get("categoria")})
+    if len(categorias) < 2:
+        return items
+    opciones = ["Todas"] + categorias
+    elegida = st.selectbox("Categoría", opciones, key=f"{key_prefix}_filtro_categoria")
+    if elegida == "Todas":
+        return items
+    return [i for i in items if i.get("categoria") == elegida]
+
+
 def render_stock(familia_id):
     if st.session_state.get("confirmacion_stock"):
         st.success(st.session_state.confirmacion_stock)
@@ -843,12 +860,20 @@ def render_stock(familia_id):
                                 file_name=f"stock_{familia_id}.csv", mime="text/csv")
 
     with st.expander("➕ Nuevo ítem"):
+        etiqueta_id = etiqueta_identificador(familia_id)
         catalogo = get_catalogo(familia_id)
-        opciones_cat = ["— Escribir manualmente —"] + [
-            f"{c['nombre']} (CAS {c['cas']})" if c.get("cas") else c["nombre"] for c in catalogo
-        ]
+
+        def _etiqueta_catalogo(c):
+            partes = [c["nombre"]]
+            if c.get("marca"):
+                partes.append(f"— {c['marca']}")
+            if c.get("cas"):
+                partes.append(f"({etiqueta_id} {c['cas']})")
+            return " ".join(partes)
+
+        opciones_cat = ["— Escribir manualmente —"] + [_etiqueta_catalogo(c) for c in catalogo]
         elegido_cat = st.selectbox(
-            "¿Es alguno de estos? (autocompleta nombre, CAS y riesgos)",
+            f"¿Es alguno de estos? (autocompleta nombre, {etiqueta_id.lower()}, categoría y riesgos)",
             opciones_cat, key="new_item_catalogo_sel",
         )
         prellenado = None
@@ -864,9 +889,22 @@ def render_stock(familia_id):
         unidad = c2.selectbox("Unidad", UNIDADES, key=f"new_item_unidad_{sufijo_key}")
         minimo = c3.number_input("Stock mínimo", min_value=0.0, step=1.0, key=f"new_item_min_{sufijo_key}")
         cas = c4.text_input(
-            "N° CAS (opcional)", value=(prellenado.get("cas") or "") if prellenado else "",
+            f"{etiqueta_id} (opcional)", value=(prellenado.get("cas") or "") if prellenado else "",
             key=f"new_item_cas_{sufijo_key}",
         )
+
+        categorias_existentes = sorted({
+            c["categoria"] for c in catalogo if c.get("categoria")
+        } | {i["categoria"] for i in get_items(familia_id) if i.get("categoria")})
+        opciones_categoria = ["(sin categoría)"] + categorias_existentes + ["+ Nueva categoría"]
+        categoria_default = prellenado.get("categoria") if prellenado and prellenado.get("categoria") else "(sin categoría)"
+        idx_categoria = opciones_categoria.index(categoria_default) if categoria_default in opciones_categoria else 0
+        categoria_sel = st.selectbox("Categoría (opcional, para agrupar y filtrar)", opciones_categoria, index=idx_categoria, key=f"new_item_categoria_sel_{sufijo_key}")
+        categoria_final = None
+        if categoria_sel == "+ Nueva categoría":
+            categoria_final = st.text_input("Nombre de la nueva categoría", key=f"new_item_categoria_nueva_{sufijo_key}").strip() or None
+        elif categoria_sel != "(sin categoría)":
+            categoria_final = categoria_sel
 
         riesgos_previos = (prellenado.get("riesgos") or "").split(",") if prellenado and prellenado.get("riesgos") else []
         riesgos_sel = st.multiselect(
@@ -888,17 +926,18 @@ def render_stock(familia_id):
             if nombre.strip():
                 add_item(
                     familia_id, nombre.strip(), unidad, minimo, st.session_state.analista_actual,
-                    cas=cas.strip() or None, riesgos=riesgos_sel or None,
+                    cas=cas.strip() or None, riesgos=riesgos_sel or None, categoria=categoria_final,
                 )
-                if guardar_en_catalogo and (cas.strip() or riesgos_sel):
+                if guardar_en_catalogo and (cas.strip() or riesgos_sel or categoria_final):
                     add_catalogo_entry(
                         familia_id, nombre.strip(), cas=cas.strip() or None, riesgos=riesgos_sel or None,
-                        fuente=f"Cargado por {st.session_state.analista_actual}",
+                        categoria=categoria_final, fuente=f"Cargado por {st.session_state.analista_actual}",
                     )
                 for k in [
                     "new_item_catalogo_sel", f"new_item_nombre_{sufijo_key}", f"new_item_unidad_{sufijo_key}",
                     f"new_item_min_{sufijo_key}", f"new_item_cas_{sufijo_key}", f"new_item_riesgos_{sufijo_key}",
-                    f"new_item_guardarcat_{sufijo_key}",
+                    f"new_item_guardarcat_{sufijo_key}", f"new_item_categoria_sel_{sufijo_key}",
+                    f"new_item_categoria_nueva_{sufijo_key}",
                 ]:
                     st.session_state.pop(k, None)
                 st.session_state.confirmacion_stock = f"✅ '{nombre}' creado. Ahora agregale un lote."
@@ -910,6 +949,7 @@ def render_stock(familia_id):
     mostrar_agotados = st.checkbox("Mostrar también los ítems agotados (stock = 0)", value=True)
 
     items_actuales = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0 or mostrar_agotados]
+    items_actuales = filtrar_por_categoria(items_actuales, key_prefix="stock")
     if items_actuales:
         resumen = pd.DataFrame([{
             "Ítem": i["nombre"],
@@ -943,10 +983,13 @@ def render_gestion_item(item):
         st.rerun()
 
     stock = item_stock(item["id"])
+    etiqueta_id = etiqueta_identificador(item.get("familia_id"))
 
     titulo_html = f"<span style='font-weight:700; font-size:1.15rem; font-family:\"Space Grotesk\",sans-serif;'>{item['nombre']}</span>"
     if item.get("cas"):
-        titulo_html += f"<br><span style='color:#5C6B67; font-weight:400; font-size:0.8rem;'>CAS {item['cas']}</span>"
+        titulo_html += f"<br><span style='color:#5C6B67; font-weight:400; font-size:0.8rem;'>{etiqueta_id} {item['cas']}</span>"
+    if item.get("categoria"):
+        titulo_html += f"<br><span style='color:#5C6B67; font-weight:400; font-size:0.8rem;'>📂 {item['categoria']}</span>"
     fila_titulo_pictogramas(titulo_html, item.get("riesgos"), tamano_picto=30)
 
     izquierda_html = (
@@ -997,6 +1040,7 @@ def render_gestion_item(item):
 
     if modo == "editar":
         st.markdown("**✏️ Editar ítem**")
+        etiqueta_id = etiqueta_identificador(item.get("familia_id"))
         e1, e2, e3, e4 = st.columns([2, 1, 1, 1])
         nuevo_nombre = e1.text_input("Nombre", value=item["nombre"], key=f"edit_nombre_{item['id']}")
         nueva_unidad = e2.selectbox(
@@ -1008,7 +1052,12 @@ def render_gestion_item(item):
             "Stock mínimo", min_value=0.0, step=1.0, value=float(item["stock_minimo"]),
             key=f"edit_minimo_{item['id']}",
         )
-        nuevo_cas = e4.text_input("N° CAS", value=item.get("cas") or "", key=f"edit_cas_{item['id']}")
+        nuevo_cas = e4.text_input(etiqueta_id, value=item.get("cas") or "", key=f"edit_cas_{item['id']}")
+
+        nueva_categoria = st.text_input(
+            "Categoría (opcional, para agrupar y filtrar)", value=item.get("categoria") or "",
+            key=f"edit_categoria_{item['id']}",
+        )
 
         riesgos_actuales = (item.get("riesgos") or "").split(",") if item.get("riesgos") else []
         nuevos_riesgos = st.multiselect(
@@ -1026,7 +1075,7 @@ def render_gestion_item(item):
                 update_item(
                     item["id"],
                     nombre=nuevo_nombre.strip(), unidad=nueva_unidad, stock_minimo=nuevo_minimo,
-                    cas=nuevo_cas.strip() or None, riesgos=nuevos_riesgos,
+                    cas=nuevo_cas.strip() or None, riesgos=nuevos_riesgos, categoria=nueva_categoria.strip() or None,
                 )
                 st.session_state.stock_modo_gestion = None
                 st.session_state.confirmacion_stock = f"✅ '{nuevo_nombre.strip()}' actualizado."

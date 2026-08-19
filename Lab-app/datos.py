@@ -207,13 +207,13 @@ def stock_series(item, lotes):
     return pd.DataFrame(rows)
 
 
-def add_item(familia_id, nombre, unidad, minimo, creado_por="", cas=None, riesgos=None):
+def add_item(familia_id, nombre, unidad, minimo, creado_por="", cas=None, riesgos=None, categoria=None):
     sb = get_client()
     sb.table("items").insert({
         "id": str(uuid.uuid4()), "familia_id": familia_id, "nombre": nombre,
         "unidad": unidad, "stock_minimo": minimo,
         "creado": datetime.now().isoformat(), "creado_por": creado_por,
-        "cas": cas, "riesgos": ",".join(riesgos) if riesgos else None,
+        "cas": cas, "riesgos": ",".join(riesgos) if riesgos else None, "categoria": categoria,
     }).execute()
 
 
@@ -279,12 +279,13 @@ def get_catalogo(familia_id):
     return res.data
 
 
-def add_catalogo_entry(familia_id, nombre, cas=None, riesgos=None, fuente=None):
+def add_catalogo_entry(familia_id, nombre, cas=None, riesgos=None, fuente=None, categoria=None, marca=None):
     sb = get_client()
     sb.table("catalogo_referencia").insert({
         "id": str(uuid.uuid4()), "familia_id": familia_id, "nombre": nombre,
         "cas": cas, "riesgos": ",".join(riesgos) if riesgos else None,
         "fuente": fuente, "creado": datetime.now().isoformat(),
+        "categoria": categoria, "marca": marca,
     }).execute()
 
 

@@ -18,7 +18,7 @@ NOMBRE_SOFTWARE = "Sistema de Inventario de Laboratorio"
 VERSION_SOFTWARE = "v1.0"
 
 
-UNIDADES = ["L", "mL", "kg", "g", "mg"]
+UNIDADES = ["L", "mL", "kg", "g", "mg", "u."]
 
 
 VENTANAS = [
@@ -28,10 +28,10 @@ VENTANAS = [
 ]
 
 
-_FACTOR_UNIDAD = {"L": 1, "mL": 0.001, "kg": 1, "g": 0.001, "mg": 0.000001}
+_FACTOR_UNIDAD = {"L": 1, "mL": 0.001, "kg": 1, "g": 0.001, "mg": 0.000001, "u.": 1}
 
 
-_FAMILIA_UNIDAD = {"L": "volumen", "mL": "volumen", "kg": "masa", "g": "masa", "mg": "masa"}
+_FAMILIA_UNIDAD = {"L": "volumen", "mL": "volumen", "kg": "masa", "g": "masa", "mg": "masa", "u.": "cantidad"}
 
 
 TIPOS_CARGA = ["Compra", "Transferencia entre laboratorios", "Devolución", "Donación", "Otro"]
@@ -49,6 +49,17 @@ RIESGOS_GHS = {
     "ambiental": ("Peligroso para el ambiente", "ambiental"),
     "gas_presion": ("Gas a presión", "gas_presion"),
 }
+
+# Algunas familias identifican sus ítems con CAS (químicos), otras con
+# número de parte del proveedor (consumibles) — mismo campo en la base,
+# distinta etiqueta según en qué familia estés parado.
+ETIQUETA_IDENTIFICADOR = {
+    "cromato": "N° de parte",
+}
+
+
+def etiqueta_identificador(familia_id):
+    return ETIQUETA_IDENTIFICADOR.get(familia_id, "N° CAS")
 
 
 def convertir_unidad(valor, desde, hasta):
