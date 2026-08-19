@@ -363,9 +363,9 @@ def panel_diagnostico():
 
 
 def _pantalla_ingreso():
-    """Pantalla única de entrada: la contraseña (si hay una configurada) y el
-    selector de persona se muestran juntos, en el mismo render. La validación
-    de la contraseña ocurre recién al tocar tu nombre — un solo toque en total."""
+    """Pantalla única de entrada: elegís tu usuario de una lista desplegable,
+    ponés la contraseña del laboratorio (si hay una configurada), y un solo
+    botón 'Ingresar' valida las dos cosas juntas."""
     if st.session_state.analista_actual:
         return True
 
@@ -374,12 +374,6 @@ def _pantalla_ingreso():
     linea_marca(NOMBRE_SOFTWARE, centrado=True, tamano="1rem", tamano_logo=44)
     st.markdown(f"<p style='text-align:center; color:#5C6B67; margin-top:-10px;'>{NOMBRE_LABORATORIO}</p>", unsafe_allow_html=True)
 
-    clave_ingresada = None
-    if clave_correcta:
-        c1, c2, c3 = st.columns([1, 1, 1])
-        with c2:
-            clave_ingresada = st.text_input("Contraseña del laboratorio", type="password", key="clave_acceso")
-
     try:
         init_db()
         personas_activas = [p for p in get_personas() if p["activo"]]
@@ -387,36 +381,35 @@ def _pantalla_ingreso():
         st.error(str(e))
         st.stop()
 
-    st.markdown("<p style='text-align:center; font-weight:600; margin-top:1rem;'>👤 ¿Quién sos?</p>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1, 1.3, 1])
+    with c2:
+        opciones = [p["nombre"] for p in personas_activas] + ["+ Soy nuevo/a"]
+        usuario_sel = st.selectbox("Usuario", opciones, key="usuario_sel_login")
 
-    def _clave_ok():
-        if clave_correcta and clave_ingresada != clave_correcta:
-            st.error("Contraseña incorrecta.")
-            return False
-        return True
+        nombre_nuevo = ""
+        if usuario_sel == "+ Soy nuevo/a":
+            nombre_nuevo = st.text_input("Tu nombre completo", key="nuevo_perfil_nombre")
 
-    if personas_activas:
-        cols = st.columns(3)
-        for idx, p in enumerate(personas_activas):
-            with cols[idx % 3]:
-                if st.button(p["nombre"], key=f"perfil_{p['id']}", use_container_width=True, type="primary"):
-                    if _clave_ok():
-                        st.session_state.autenticado = True
-                        st.session_state.analista_actual = p["nombre"]
-                        st.rerun()
-    else:
-        st.info("Todavía no hay ningún analista cargado. Agregate como el primero abajo.")
+        clave_ingresada = None
+        if clave_correcta:
+            clave_ingresada = st.text_input("Contraseña", type="password", key="clave_acceso")
 
-    with st.expander("+ Soy nuevo/a, agregarme"):
-        nombre_nuevo = st.text_input("Tu nombre completo", key="nuevo_perfil_nombre")
-        if st.button("Agregar y continuar", key="nuevo_perfil_btn", type="primary"):
-            if not nombre_nuevo.strip():
-                st.error("Ingresá un nombre.")
-            elif _clave_ok():
-                add_persona(nombre_nuevo.strip())
+        if st.button("Ingresar", use_container_width=True, type="primary"):
+            if clave_correcta and clave_ingresada != clave_correcta:
+                st.error("Contraseña incorrecta.")
+            elif usuario_sel == "+ Soy nuevo/a":
+                if not nombre_nuevo.strip():
+                    st.error("Ingresá tu nombre.")
+                else:
+                    add_persona(nombre_nuevo.strip())
+                    st.session_state.autenticado = True
+                    st.session_state.analista_actual = nombre_nuevo.strip()
+                    st.rerun()
+            else:
                 st.session_state.autenticado = True
-                st.session_state.analista_actual = nombre_nuevo.strip()
+                st.session_state.analista_actual = usuario_sel
                 st.rerun()
+
     return False
 
 
@@ -663,11 +656,13 @@ def render_usar(familia_id):
             with cols[i % 3]:
                 if tarjeta_item(it, key_prefix="sel_usar"):
                     st.session_state.item_id = it["id"]
+                    st.session_state.usar_lote_sel = None
                     st.rerun()
         return
 
     if st.button("← Elegir otro solvente"):
         st.session_state.item_id = None
+        st.session_state.usar_lote_sel = None
         st.rerun()
 
     st.subheader(item["nombre"])
@@ -744,11 +739,13 @@ def render_chequear(familia_id):
             with cols[i % 3]:
                 if tarjeta_item(it, key_prefix="sel_chk"):
                     st.session_state.item_chequeo_id = it["id"]
+                    st.session_state.chk_lote_sel = None
                     st.rerun()
         return
 
     if st.button("← Elegir otro solvente"):
         st.session_state.item_chequeo_id = None
+        st.session_state.chk_lote_sel = None
         st.rerun()
 
     st.subheader(item["nombre"])
