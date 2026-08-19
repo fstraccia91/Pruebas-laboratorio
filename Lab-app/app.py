@@ -31,7 +31,7 @@ from datos import (
     item_stock, lote_stock, ultimo_chequeo, anular_movimiento, contar_movimientos_lote,
     eliminar_lote, contar_lotes_item, eliminar_item, update_item, update_lote, registrar_chequeo, get_lote_inicial,
     daily_consumption, stock_series, add_item, add_lote, get_envases, add_movimiento,
-    get_personas, add_persona, toggle_persona, delete_persona,
+    get_personas, add_persona, toggle_persona, delete_persona, get_catalogo, add_catalogo_entry,
 )
 from logica import (
     NOMBRE_LABORATORIO, SUBTITULO_LABORATORIO, NOMBRE_SOFTWARE, VERSION_SOFTWARE,
@@ -837,18 +837,46 @@ def render_stock(familia_id):
                                 file_name=f"stock_{familia_id}.csv", mime="text/csv")
 
     with st.expander("➕ Nuevo ítem"):
-        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-        nombre = c1.text_input("Nombre (ej: Acetona HPLC)", key="new_item_nombre")
-        unidad = c2.selectbox("Unidad", UNIDADES, key="new_item_unidad")
-        minimo = c3.number_input("Stock mínimo", min_value=0.0, step=1.0, key="new_item_min")
-        cas = c4.text_input("N° CAS (opcional)", key="new_item_cas")
+        catalogo = get_catalogo(familia_id)
+        opciones_cat = ["— Escribir manualmente —"] + [
+            f"{c['nombre']} (CAS {c['cas']})" if c.get("cas") else c["nombre"] for c in catalogo
+        ]
+        elegido_cat = st.selectbox(
+            "¿Es alguno de estos? (autocompleta nombre, CAS y riesgos)",
+            opciones_cat, key="new_item_catalogo_sel",
+        )
+        prellenado = None
+        if elegido_cat != "— Escribir manualmente —":
+            prellenado = catalogo[opciones_cat.index(elegido_cat) - 1]
+        sufijo_key = elegido_cat  # cambia el key al cambiar la selección, para que se re-precargue bien
 
+        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+        nombre = c1.text_input(
+            "Nombre (ej: Acetona HPLC)", value=prellenado["nombre"] if prellenado else "",
+            key=f"new_item_nombre_{sufijo_key}",
+        )
+        unidad = c2.selectbox("Unidad", UNIDADES, key=f"new_item_unidad_{sufijo_key}")
+        minimo = c3.number_input("Stock mínimo", min_value=0.0, step=1.0, key=f"new_item_min_{sufijo_key}")
+        cas = c4.text_input(
+            "N° CAS (opcional)", value=(prellenado.get("cas") or "") if prellenado else "",
+            key=f"new_item_cas_{sufijo_key}",
+        )
+
+        riesgos_previos = (prellenado.get("riesgos") or "").split(",") if prellenado and prellenado.get("riesgos") else []
         riesgos_sel = st.multiselect(
             "Clase de riesgo (opcional)",
             options=list(RIESGOS_GHS.keys()),
+            default=[r for r in riesgos_previos if r in RIESGOS_GHS],
             format_func=lambda k: RIESGOS_GHS[k][0],
-            key="new_item_riesgos",
+            key=f"new_item_riesgos_{sufijo_key}",
         )
+
+        guardar_en_catalogo = False
+        if prellenado is None:
+            guardar_en_catalogo = st.checkbox(
+                "Guardar en el catálogo de referencia para reutilizar después",
+                key=f"new_item_guardarcat_{sufijo_key}",
+            )
 
         if st.button("Guardar ítem"):
             if nombre.strip():
@@ -856,6 +884,11 @@ def render_stock(familia_id):
                     familia_id, nombre.strip(), unidad, minimo, st.session_state.analista_actual,
                     cas=cas.strip() or None, riesgos=riesgos_sel or None,
                 )
+                if guardar_en_catalogo and (cas.strip() or riesgos_sel):
+                    add_catalogo_entry(
+                        familia_id, nombre.strip(), cas=cas.strip() or None, riesgos=riesgos_sel or None,
+                        fuente=f"Cargado por {st.session_state.analista_actual}",
+                    )
                 st.success(f"'{nombre}' creado. Ahora agregale un lote.")
                 st.rerun()
             else:

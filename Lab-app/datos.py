@@ -271,6 +271,23 @@ def add_movimiento(item_id, lote_id, tipo, cantidad, analista, nota, categoria=N
     }).execute()
 
 
+def get_catalogo(familia_id):
+    """Catálogo de referencia para autocompletar al crear un ítem (nombre,
+    CAS, riesgos ya cargados de antes — de una SDS o de un ítem anterior)."""
+    sb = get_client()
+    res = sb.table("catalogo_referencia").select("*").eq("familia_id", familia_id).order("nombre").execute()
+    return res.data
+
+
+def add_catalogo_entry(familia_id, nombre, cas=None, riesgos=None, fuente=None):
+    sb = get_client()
+    sb.table("catalogo_referencia").insert({
+        "id": str(uuid.uuid4()), "familia_id": familia_id, "nombre": nombre,
+        "cas": cas, "riesgos": ",".join(riesgos) if riesgos else None,
+        "fuente": fuente, "creado": datetime.now().isoformat(),
+    }).execute()
+
+
 def get_personas():
     sb = get_client()
     res = sb.table("personas").select("*").order("nombre").execute()
