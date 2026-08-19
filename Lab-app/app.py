@@ -32,6 +32,7 @@ from datos import (
     eliminar_lote, contar_lotes_item, eliminar_item, update_item, update_lote, registrar_chequeo, get_lote_inicial,
     daily_consumption, stock_series, add_item, add_lote, get_envases, add_movimiento,
     get_personas, add_persona, toggle_persona, delete_persona, get_catalogo, add_catalogo_entry,
+    get_favoritos_ids, toggle_favorito, conteo_usos_recientes,
 )
 from logica import (
     NOMBRE_LABORATORIO, SUBTITULO_LABORATORIO, NOMBRE_SOFTWARE, VERSION_SOFTWARE,
@@ -320,10 +321,11 @@ def fila_titulo_pictogramas(titulo_html, riesgos_str, tamano_picto=24):
     )
 
 
-def tarjeta_item(item, key_prefix):
+def tarjeta_item(item, key_prefix, favorito=False):
     """Tarjeta de ítem para Usar/Chequear: nombre + CAS/N° de parte a la
-    izquierda, stock + estado debajo, pictogramas siempre a la derecha.
-    Devuelve True si se tocó 'Seleccionar'."""
+    izquierda, stock + estado debajo, pictogramas siempre a la derecha, y un
+    botón de favorito (marcar/desmarcar).
+    Devuelve (se_tocó_seleccionar, se_tocó_favorito)."""
     stock = item_stock(item["id"])
     nombre_html = f"<span style='font-weight:600; font-size:0.95rem;'>{item['nombre']}</span>"
     if item.get("cas"):
@@ -337,7 +339,26 @@ def tarjeta_item(item, key_prefix):
             f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}</div>",
             unsafe_allow_html=True,
         )
-        return st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True)
+        click_favorito = st.button(
+            "⭐ Quitar de favoritos" if favorito else "☆ Marcar como favorito",
+            key=f"{key_prefix}_fav_{item['id']}", use_container_width=True,
+        )
+        click_seleccionar = st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True, type="primary")
+        return click_seleccionar, click_favorito
+
+
+def ordenar_por_prioridad(items, familia_id):
+    """Favoritos de la persona actual primero, y dentro de cada grupo, los
+    más usados en los últimos 90 días primero. Devuelve (items_ordenados,
+    ids_favoritos) — este último para saber qué estrella mostrar en cada tarjeta."""
+    persona = st.session_state.analista_actual
+    favoritos_ids = get_favoritos_ids(persona, familia_id) if persona else set()
+    uso = conteo_usos_recientes(familia_id)
+    items_ordenados = sorted(
+        items,
+        key=lambda it: (0 if it["id"] in favoritos_ids else 1, -uso.get(it["id"], 0), it["nombre"]),
+    )
+    return items_ordenados, favoritos_ids
 
 
 def panel_diagnostico():
@@ -654,12 +675,17 @@ def render_usar(familia_id):
         st.caption("Tocá el solvente que necesitás usar.")
         items = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0]
         items = filtrar_por_categoria(items, key_prefix="usar")
+        items, favoritos_ids = ordenar_por_prioridad(items, familia_id)
         if not items:
             st.info("No hay ítems con stock disponible. Si algo se agotó, reponelo desde la pestaña Stock.")
         cols = st.columns(3)
         for i, it in enumerate(items):
             with cols[i % 3]:
-                if tarjeta_item(it, key_prefix="sel_usar"):
+                click_sel, click_fav = tarjeta_item(it, key_prefix="sel_usar", favorito=it["id"] in favoritos_ids)
+                if click_fav:
+                    toggle_favorito(st.session_state.analista_actual, it["id"])
+                    st.rerun()
+                if click_sel:
                     st.session_state.item_id = it["id"]
                     st.session_state.usar_lote_sel = None
                     st.rerun()
@@ -740,10 +766,15 @@ def render_chequear(familia_id):
         st.caption("Tocá el solvente que querés chequear.")
         items = get_items(familia_id)
         items = filtrar_por_categoria(items, key_prefix="chk")
+        items, favoritos_ids = ordenar_por_prioridad(items, familia_id)
         cols = st.columns(3)
         for i, it in enumerate(items):
             with cols[i % 3]:
-                if tarjeta_item(it, key_prefix="sel_chk"):
+                click_sel, click_fav = tarjeta_item(it, key_prefix="sel_chk", favorito=it["id"] in favoritos_ids)
+                if click_fav:
+                    toggle_favorito(st.session_state.analista_actual, it["id"])
+                    st.rerun()
+                if click_sel:
                     st.session_state.item_chequeo_id = it["id"]
                     st.session_state.chk_lote_sel = None
                     st.rerun()
@@ -950,14 +981,16 @@ def render_stock(familia_id):
 
     items_actuales = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0 or mostrar_agotados]
     items_actuales = filtrar_por_categoria(items_actuales, key_prefix="stock")
+    items_actuales, favoritos_ids_stock = ordenar_por_prioridad(items_actuales, familia_id)
     if items_actuales:
         resumen = pd.DataFrame([{
+            "⭐": "⭐" if i["id"] in favoritos_ids_stock else "",
             "Ítem": i["nombre"],
             "Stock": f"{item_stock(i['id'])} {i['unidad']}",
             "Mínimo": f"{i['stock_minimo']} {i['unidad']}",
             "Estado": estado(item_stock(i["id"]), i["stock_minimo"]),
         } for i in items_actuales])
-        st.caption("Tocá una fila para gestionar ese ítem (agregar lote, cargar stock, o eliminar).")
+        st.caption("Tocá una fila para gestionar ese ítem (agregar lote, cargar stock, o eliminar). Ordenado por favoritos y uso reciente.")
         evento = st.dataframe(
             resumen.style.map(_color_estado, subset=["Estado"]),
             hide_index=True, use_container_width=True,

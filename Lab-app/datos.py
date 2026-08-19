@@ -289,6 +289,52 @@ def add_catalogo_entry(familia_id, nombre, cas=None, riesgos=None, fuente=None, 
     }).execute()
 
 
+def get_favoritos_ids(persona_nombre, familia_id):
+    """IDs de los ítems que esta persona marcó como favoritos, dentro de
+    una familia en particular."""
+    sb = get_client()
+    ids_familia = {i["id"] for i in sb.table("items").select("id").eq("familia_id", familia_id).execute().data}
+    favs = sb.table("favoritos").select("item_id").eq("persona_nombre", persona_nombre).execute().data
+    return {f["item_id"] for f in favs if f["item_id"] in ids_familia}
+
+
+def toggle_favorito(persona_nombre, item_id):
+    """Si ya era favorito, lo saca. Si no lo era, lo agrega. Devuelve True
+    si quedó como favorito, False si se quitó."""
+    sb = get_client()
+    existente = (
+        sb.table("favoritos").select("id")
+        .eq("persona_nombre", persona_nombre).eq("item_id", item_id).execute()
+    ).data
+    if existente:
+        sb.table("favoritos").delete().eq("id", existente[0]["id"]).execute()
+        return False
+    sb.table("favoritos").insert({
+        "id": str(uuid.uuid4()), "persona_nombre": persona_nombre, "item_id": item_id,
+        "creado": datetime.now().isoformat(),
+    }).execute()
+    return True
+
+
+def conteo_usos_recientes(familia_id, dias=90):
+    """Cuántas veces se usó (tipo='out') cada ítem de la familia en los
+    últimos `dias` días — para poder ordenar por 'más usado'."""
+    sb = get_client()
+    ids = [i["id"] for i in sb.table("items").select("id").eq("familia_id", familia_id).execute().data]
+    if not ids:
+        return {}
+    cutoff = (datetime.now() - timedelta(days=dias)).isoformat()
+    movs = (
+        sb.table("movimientos").select("item_id")
+        .in_("item_id", ids).eq("tipo", "out").eq("anulado", False)
+        .gte("fecha", cutoff).execute()
+    ).data
+    conteo = {}
+    for m in movs:
+        conteo[m["item_id"]] = conteo.get(m["item_id"], 0) + 1
+    return conteo
+
+
 def get_personas():
     sb = get_client()
     res = sb.table("personas").select("*").order("nombre").execute()
