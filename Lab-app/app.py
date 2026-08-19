@@ -136,26 +136,13 @@ st.markdown("""
         font-weight: 500;
     }
 
-    /* Las tarjetas de ítem (Usar/Chequear) necesitan posición relativa para
-       poder "anclar" la estrella de favorito adentro, en vez de que ocupe
-       su propio renglón */
-    div[class*="st-key-tarjeta_"] {
-        position: relative;
-    }
-
-    /* La estrellita de favorito: chica, sin fondo, "flotando" a la altura
-       del renglón de stock/estado (no en su propio renglón aparte) — el
+    /* La estrellita de favorito: chica, sin fondo, solo el ícono. El
        "_fav_" está en la key de todos los botones de favorito de todos los
        ítems, así que esta única regla los alcanza a todos */
-    div[class*="_fav_"] {
-        position: absolute;
-        top: 40px;
-        right: 14px;
-    }
     div[class*="_fav_"] button {
         min-height: unset;
         width: auto;
-        padding: 0;
+        padding: 2px 8px;
         font-size: 1.1rem;
         border: none;
         background: transparent;
@@ -360,16 +347,19 @@ def tarjeta_item(item, key_prefix, favorito=False):
 
     with st.container(border=True, key=f"tarjeta_{key_prefix}_{item['id']}"):
         fila_titulo_pictogramas(nombre_html, item.get("riesgos"))
-        st.markdown(
-            f"<div style='color:#5C6B67; font-size:0.85rem; margin-top:4px;'>"
-            f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}</div>",
-            unsafe_allow_html=True,
-        )
-        click_favorito = st.button(
-            "⭐" if favorito else "☆",
-            key=f"{key_prefix}_fav_{item['id']}",
-            help="Quitar de favoritos" if favorito else "Marcar como favorito",
-        )
+        col_info, col_star = st.columns([5, 1])
+        with col_info:
+            st.markdown(
+                f"<div style='color:#5C6B67; font-size:0.85rem; margin-top:8px;'>"
+                f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}</div>",
+                unsafe_allow_html=True,
+            )
+        with col_star:
+            click_favorito = st.button(
+                "⭐" if favorito else "☆",
+                key=f"{key_prefix}_fav_{item['id']}",
+                help="Quitar de favoritos" if favorito else "Marcar como favorito",
+            )
         click_seleccionar = st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True, type="primary")
         return click_seleccionar, click_favorito
 
