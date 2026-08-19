@@ -142,6 +142,42 @@ def _img_b64(path):
         return base64.b64encode(f.read()).decode()
 
 
+def linea_marca(texto, centrado=False, tamano="0.95rem", tamano_logo=34):
+    """Logo + texto en una fila (HTML/CSS, no columnas, para que quede al lado
+    siempre, incluso en el celular). Se usa igual en la pantalla de entrada y
+    dentro de la app, para que se vean consistentes entre sí."""
+    logo_html = ""
+    if os.path.exists("assets/logo_inti.png"):
+        _logo_b64 = _img_b64("assets/logo_inti.png")
+        logo_html = (
+            f"<img src='data:image/png;base64,{_logo_b64}' "
+            f"style='width:{tamano_logo}px; height:{tamano_logo}px; margin-right:8px; border-radius:6px;' />"
+        )
+    justificacion = "center" if centrado else "flex-start"
+    st.markdown(
+        f"""
+        <div style='display:flex; align-items:center; justify-content:{justificacion}; margin-bottom:6px;'>
+            {logo_html}
+            <span style='font-size:{tamano}; color:#5C6B67; font-weight:500;'>{texto}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def titulo_seccion(titulo, icono=""):
+    """Título grande (apenas más grande que linea_marca, no un st.title enorme)."""
+    st.markdown(
+        f"""
+        <div style='font-size:1.55rem; font-weight:700; color:#14504A;
+                     font-family:"Space Grotesk","IBM Plex Sans",sans-serif; margin-bottom:14px;'>
+            {icono} {titulo}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def mostrar_pictogramas(riesgos_str, tamaño=26):
     """Muestra los pictogramas GHS del ítem en fila (si subiste las imágenes a
     assets/ghs/). Si falta algún archivo, simplemente lo salta sin romper."""
@@ -387,41 +423,6 @@ def render_home():
     url_conectada = os.environ.get("SUPABASE_URL", "(sin configurar)")
     st.caption(f"🔌 Base de datos conectada: {url_conectada}")
 
-
-def linea_marca(texto, centrado=False, tamano="0.95rem", tamano_logo=34):
-    """Logo + texto en una fila (HTML/CSS, no columnas, para que quede al lado
-    siempre, incluso en el celular). Se usa igual en la pantalla de entrada y
-    dentro de la app, para que se vean consistentes entre sí."""
-    logo_html = ""
-    if os.path.exists("assets/logo_inti.png"):
-        _logo_b64 = _img_b64("assets/logo_inti.png")
-        logo_html = (
-            f"<img src='data:image/png;base64,{_logo_b64}' "
-            f"style='width:{tamano_logo}px; height:{tamano_logo}px; margin-right:8px; border-radius:6px;' />"
-        )
-    justificacion = "center" if centrado else "flex-start"
-    st.markdown(
-        f"""
-        <div style='display:flex; align-items:center; justify-content:{justificacion}; margin-bottom:6px;'>
-            {logo_html}
-            <span style='font-size:{tamano}; color:#5C6B67; font-weight:500;'>{texto}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def titulo_seccion(titulo, icono=""):
-    """Título grande (apenas más grande que linea_marca, no un st.title enorme)."""
-    st.markdown(
-        f"""
-        <div style='font-size:1.55rem; font-weight:700; color:#14504A;
-                     font-family:"Space Grotesk","IBM Plex Sans",sans-serif; margin-bottom:14px;'>
-            {icono} {titulo}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def render_familia(familia_id):
