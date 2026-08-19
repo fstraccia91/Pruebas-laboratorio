@@ -34,7 +34,7 @@ from datos import (
 )
 from logica import (
     NOMBRE_LABORATORIO, SUBTITULO_LABORATORIO, NOMBRE_SOFTWARE, VERSION_SOFTWARE,
-    UNIDADES, VENTANAS, TIPOS_CARGA, convertir_unidad, dias_para_vencer,
+    UNIDADES, VENTANAS, TIPOS_CARGA, RIESGOS_GHS, convertir_unidad, dias_para_vencer,
     etiqueta_vencimiento, estado, _color_estado,
 )
 
@@ -148,6 +148,23 @@ if "analista_actual" not in st.session_state:
 
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
+
+
+def mostrar_pictogramas(riesgos_str, tamaño=26):
+    """Muestra los pictogramas GHS del ítem (si subiste las imágenes a
+    assets/ghs/). Si falta algún archivo, simplemente lo salta sin romper."""
+    if not riesgos_str:
+        return
+    claves = riesgos_str.split(",")
+    rutas = [
+        f"assets/ghs/{RIESGOS_GHS[c][1]}"
+        for c in claves
+        if c in RIESGOS_GHS and os.path.exists(f"assets/ghs/{RIESGOS_GHS[c][1]}")
+    ]
+    if rutas:
+        cols = st.columns(len(rutas))
+        for col, ruta in zip(cols, rutas):
+            col.image(ruta, width=tamaño)
 
 
 def _pantalla_ingreso():
@@ -277,7 +294,11 @@ def render_home():
         f"{NOMBRE_SOFTWARE} · {VERSION_SOFTWARE}</div>",
         unsafe_allow_html=True,
     )
-    st.title(f"🧪 {NOMBRE_LABORATORIO}")
+    logo_col, titulo_col = st.columns([1, 8])
+    if os.path.exists("assets/logo_inti.png"):
+        logo_col.image("assets/logo_inti.png", width=70)
+    with titulo_col:
+        st.title(f"🧪 {NOMBRE_LABORATORIO}")
     st.caption(f"{SUBTITULO_LABORATORIO} · Panel de Insumos")
     st.caption("Elegí qué stock querés ver. Cada familia se controla por separado.")
 
@@ -441,6 +462,7 @@ def render_usar(familia_id):
                     st.markdown(f"**{it['nombre']}**")
                     if it.get("cas"):
                         st.caption(f"CAS {it['cas']}")
+                    mostrar_pictogramas(it.get("riesgos"))
                     st.write(f"{stock} {it['unidad']} · {estado(stock, it['stock_minimo'])}")
                     if st.button("Seleccionar", key=f"sel_usar_{it['id']}", use_container_width=True):
                         st.session_state.item_id = it["id"]
@@ -525,6 +547,7 @@ def render_chequear(familia_id):
                     st.markdown(f"**{it['nombre']}**")
                     if it.get("cas"):
                         st.caption(f"CAS {it['cas']}")
+                    mostrar_pictogramas(it.get("riesgos"))
                     st.write(f"{stock} {it['unidad']} · {estado(stock, it['stock_minimo'])}")
                     if st.button("Seleccionar", key=f"sel_chk_{it['id']}", use_container_width=True):
                         st.session_state.item_chequeo_id = it["id"]
@@ -626,11 +649,18 @@ def render_stock(familia_id):
         minimo = c3.number_input("Stock mínimo", min_value=0.0, step=1.0, key="new_item_min")
         cas = c4.text_input("N° CAS (opcional)", key="new_item_cas")
 
+        riesgos_sel = st.multiselect(
+            "Clase de riesgo (opcional)",
+            options=list(RIESGOS_GHS.keys()),
+            format_func=lambda k: RIESGOS_GHS[k][0],
+            key="new_item_riesgos",
+        )
+
         if st.button("Guardar ítem"):
             if nombre.strip():
                 add_item(
                     familia_id, nombre.strip(), unidad, minimo, st.session_state.analista_actual,
-                    cas=cas.strip() or None,
+                    cas=cas.strip() or None, riesgos=riesgos_sel or None,
                 )
                 st.success(f"'{nombre}' creado. Ahora agregale un lote.")
                 st.rerun()
@@ -674,6 +704,7 @@ def render_gestion_item(item):
 
     if item.get("cas"):
         st.caption(f"CAS: {item['cas']}")
+    mostrar_pictogramas(item.get("riesgos"), tamaño=36)
 
     st.metric("Stock total", f"{stock} {item['unidad']}", help=estado(stock, item["stock_minimo"]))
 

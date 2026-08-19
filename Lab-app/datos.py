@@ -189,13 +189,13 @@ def stock_series(item, lotes):
     return pd.DataFrame(rows)
 
 
-def add_item(familia_id, nombre, unidad, minimo, creado_por="", cas=None):
+def add_item(familia_id, nombre, unidad, minimo, creado_por="", cas=None, riesgos=None):
     sb = get_client()
     sb.table("items").insert({
         "id": str(uuid.uuid4()), "familia_id": familia_id, "nombre": nombre,
         "unidad": unidad, "stock_minimo": minimo,
         "creado": datetime.now().isoformat(), "creado_por": creado_por,
-        "cas": cas,
+        "cas": cas, "riesgos": ",".join(riesgos) if riesgos else None,
     }).execute()
 
 
