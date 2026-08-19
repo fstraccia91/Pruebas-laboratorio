@@ -335,31 +335,32 @@ def fila_titulo_pictogramas(titulo_html, riesgos_str, tamano_picto=24):
 
 
 def tarjeta_item(item, key_prefix, favorito=False):
-    """Tarjeta de ítem para Usar/Chequear: nombre + CAS/N° de parte a la
-    izquierda, stock + estado debajo, pictogramas siempre a la derecha, y un
-    botón de favorito (marcar/desmarcar).
-    Devuelve (se_tocó_seleccionar, se_tocó_favorito)."""
+    """Tarjeta de ítem para Usar/Chequear: nombre + pictogramas + estrella en
+    la primera línea, CAS/N° de parte en la segunda, litros + estado en la
+    tercera. Devuelve (se_tocó_seleccionar, se_tocó_favorito)."""
     stock = item_stock(item["id"])
     nombre_html = f"<span style='font-weight:600; font-size:0.95rem;'>{item['nombre']}</span>"
-    if item.get("cas"):
-        etiqueta_id = etiqueta_identificador(item.get("familia_id"))
-        nombre_html += f" <span style='color:#5C6B67; font-weight:400; font-size:0.95rem;'>· {etiqueta_id} {item['cas']}</span>"
 
     with st.container(border=True, key=f"tarjeta_{key_prefix}_{item['id']}"):
-        fila_titulo_pictogramas(nombre_html, item.get("riesgos"))
-        col_info, col_star = st.columns([5, 1])
-        with col_info:
-            st.markdown(
-                f"<div style='color:#5C6B67; font-size:0.85rem; margin-top:8px;'>"
-                f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}</div>",
-                unsafe_allow_html=True,
-            )
+        col_nombre, col_star = st.columns([5, 1])
+        with col_nombre:
+            fila_titulo_pictogramas(nombre_html, item.get("riesgos"))
         with col_star:
             click_favorito = st.button(
                 "⭐" if favorito else "☆",
                 key=f"{key_prefix}_fav_{item['id']}",
                 help="Quitar de favoritos" if favorito else "Marcar como favorito",
             )
+
+        if item.get("cas"):
+            etiqueta_id = etiqueta_identificador(item.get("familia_id"))
+            st.caption(f"{etiqueta_id} {item['cas']}")
+
+        st.markdown(
+            f"<div style='color:#5C6B67; font-size:0.85rem;'>"
+            f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}</div>",
+            unsafe_allow_html=True,
+        )
         click_seleccionar = st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True, type="primary")
         return click_seleccionar, click_favorito
 
@@ -693,6 +694,12 @@ def render_usar(familia_id):
         items = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0]
         items = filtrar_por_categoria(items, key_prefix="usar")
         items, favoritos_ids = ordenar_por_prioridad(items, familia_id)
+        with st.expander("🔧 Diagnóstico de favoritos (temporal, para revisar el orden)"):
+            nombres_fav = [i["nombre"] for i in items if i["id"] in favoritos_ids]
+            st.write(f"Analista identificado: **{st.session_state.analista_actual}**")
+            st.write(f"Favoritos guardados en la base para esta persona: {nombres_fav or '(ninguno)'}")
+            st.write("Orden final calculado, en este mismo orden:")
+            st.write([i["nombre"] for i in items])
         if not items:
             st.info("No hay ítems con stock disponible. Si algo se agotó, reponelo desde la pestaña Stock.")
         cols = st.columns(3)
