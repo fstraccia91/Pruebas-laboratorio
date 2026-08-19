@@ -36,17 +36,18 @@ _FAMILIA_UNIDAD = {"L": "volumen", "mL": "volumen", "kg": "masa", "g": "masa", "
 
 TIPOS_CARGA = ["Compra", "Transferencia entre laboratorios", "Devolución", "Donación", "Otro"]
 
-# clave -> (etiqueta visible, nombre del archivo dentro de assets/ghs/)
+# clave -> (etiqueta visible, nombre del archivo dentro de assets/ghs/, SIN extensión —
+# el código busca .png, .jpg o .jpeg, lo que hayas subido)
 RIESGOS_GHS = {
-    "corrosivo": ("Corrosivo", "corrosivo.png"),
-    "inflamable": ("Inflamable", "inflamable.png"),
-    "toxico": ("Tóxico", "toxico.png"),
-    "irritante": ("Irritante / Nocivo", "irritante.png"),
-    "oxidante": ("Oxidante", "oxidante.png"),
-    "explosivo": ("Explosivo", "explosivo.png"),
-    "salud": ("Peligro para la salud", "salud.png"),
-    "ambiental": ("Peligroso para el ambiente", "ambiental.png"),
-    "gas_presion": ("Gas a presión", "gas_presion.png"),
+    "corrosivo": ("Corrosivo", "corrosivo"),
+    "inflamable": ("Inflamable", "inflamable"),
+    "toxico": ("Tóxico", "toxico"),
+    "irritante": ("Irritante / Nocivo", "irritante"),
+    "oxidante": ("Oxidante", "oxidante"),
+    "explosivo": ("Explosivo", "explosivo"),
+    "salud": ("Peligro para la salud", "salud"),
+    "ambiental": ("Peligroso para el ambiente", "ambiental"),
+    "gas_presion": ("Gas a presión", "gas_presion"),
 }
 
 

@@ -167,15 +167,49 @@ def _img_b64(path):
         return base64.b64encode(f.read()).decode()
 
 
+def _buscar_imagen(base_sin_extension):
+    """Busca <base>.png, .jpg, .jpeg o .webp (probando también en mayúsculas) y
+    devuelve la ruta que encuentre primero, o None si no existe ninguna.
+    Así no importa en qué formato hayas guardado la imagen."""
+    for ext in ("png", "jpg", "jpeg", "webp", "PNG", "JPG", "JPEG", "WEBP"):
+        ruta = f"{base_sin_extension}.{ext}"
+        if os.path.exists(ruta):
+            return ruta
+    return None
+
+
+def _mime_tipo(ruta):
+    ext = ruta.rsplit(".", 1)[-1].lower()
+    if ext in ("jpg", "jpeg"):
+        return "image/jpeg"
+    if ext == "webp":
+        return "image/webp"
+    return "image/png"
+
+
+def _img_datauri(ruta):
+    return f"data:{_mime_tipo(ruta)};base64,{_img_b64(ruta)}"
+
+
+def icono_familia_html(fam, tamano=28):
+    """Ícono de una familia (Solventes, Sales...): si subiste
+    assets/iconos/familia_<id>.(png/jpg/webp), lo muestra; si no, usa el
+    emoji que tiene guardado en la base (fam['icono'])."""
+    ruta = _buscar_imagen(f"assets/iconos/familia_{fam['id']}")
+    if ruta:
+        return f"<img src='{_img_datauri(ruta)}' style='width:{tamano}px; height:{tamano}px; vertical-align:middle;' />"
+    return fam["icono"]
+
+
 def linea_marca(texto, centrado=False, tamano="0.95rem", tamano_logo=34):
     """Logo + texto en una fila (HTML/CSS, no columnas, para que quede al lado
     siempre, incluso en el celular). Se usa igual en la pantalla de entrada y
     dentro de la app, para que se vean consistentes entre sí."""
     logo_html = ""
-    if os.path.exists("assets/logo_inti.png"):
-        _logo_b64 = _img_b64("assets/logo_inti.png")
+    ruta_logo = _buscar_imagen("assets/logo_inti")
+    if ruta_logo:
         logo_html = (
-            f"<img src='data:image/png;base64,{_logo_b64}' "
+            f"<img src='{_img_datauri(ruta_logo)}' "
             f"style='width:{tamano_logo}px; height:{tamano_logo}px; margin-right:8px; "
             f"border-radius:6px; flex-shrink:0;' />"
         )
@@ -231,14 +265,19 @@ def mostrar_pictogramas(riesgos_str, tamaño=26):
 
 
 def _rutas_pictogramas(riesgos_str):
+    """Devuelve las rutas de los pictogramas ya cargados (busca .png/.jpg/.jpeg
+    para cada uno, no importa en qué formato los hayas subido)."""
     if not riesgos_str:
         return []
     claves = riesgos_str.split(",")
-    return [
-        f"assets/ghs/{RIESGOS_GHS[c][1]}"
-        for c in claves
-        if c in RIESGOS_GHS and os.path.exists(f"assets/ghs/{RIESGOS_GHS[c][1]}")
-    ]
+    rutas = []
+    for c in claves:
+        if c not in RIESGOS_GHS:
+            continue
+        ruta = _buscar_imagen(f"assets/ghs/{RIESGOS_GHS[c][1]}")
+        if ruta:
+            rutas.append(ruta)
+    return rutas
 
 
 def fila_titulo_pictogramas(titulo_html, riesgos_str, tamano_picto=24):
@@ -248,7 +287,7 @@ def fila_titulo_pictogramas(titulo_html, riesgos_str, tamano_picto=24):
     de gestión de Stock — un solo lugar para mantener el mismo estilo."""
     rutas = _rutas_pictogramas(riesgos_str)
     pictos_html = "".join(
-        f"<img src='data:image/png;base64,{_img_b64(r)}' "
+        f"<img src='{_img_datauri(r)}' "
         f"style='width:{tamano_picto}px; height:{tamano_picto}px; margin-left:4px;' />"
         for r in rutas
     )
@@ -452,14 +491,18 @@ def render_home():
     cols = st.columns(len(familias))
     for col, fam in zip(cols, familias):
         with col:
+            st.markdown(
+                f"<div style='text-align:center; font-size:28px; margin-bottom:2px;'>{icono_familia_html(fam, tamano=36)}</div>",
+                unsafe_allow_html=True,
+            )
             if fam["activo"]:
-                if st.button(f"{fam['icono']}  {fam['nombre']}", use_container_width=True, type="primary"):
+                if st.button(fam["nombre"], use_container_width=True, type="primary"):
                     st.session_state.familia_id = fam["id"]
                     st.session_state.seccion_activa = None
                     st.session_state.subseccion_activa = None
                     st.rerun()
             else:
-                st.button(f"{fam['icono']}  {fam['nombre']}", use_container_width=True, disabled=True)
+                st.button(fam["nombre"], use_container_width=True, disabled=True)
                 st.caption("Próximamente")
 
     url_conectada = os.environ.get("SUPABASE_URL", "(sin configurar)")
@@ -498,7 +541,7 @@ def render_familia(familia_id):
         st.session_state.stock_modo_gestion = None
         st.rerun()
 
-    titulo_seccion(fam["nombre"], fam["icono"])
+    titulo_seccion(fam["nombre"], icono_familia_html(fam, tamano=30))
 
     secciones_principales = [
         ("usar", "📲", "Usar"),
@@ -522,21 +565,21 @@ def render_familia(familia_id):
         "personas": lambda: render_personas(),
     }
 
-    ICONOS_ARCHIVO = {
-        "usar": "usar.png",
-        "chequear": "chequear.png",
-        "stock": "stock.png",
-        "gestion_labo": "gestion_laboratorio.png",
+    ICONOS_BASE = {
+        "usar": "usar",
+        "chequear": "chequear",
+        "stock": "stock",
+        "gestion_labo": "gestion_laboratorio",
     }
 
     def _icono_seccion_html(sec_id, emoji_respaldo, tamano=44):
-        """Si subiste el archivo correspondiente a assets/iconos/, lo muestra;
-        si no, usa el emoji de respaldo — así nunca rompe aunque falte algo."""
-        nombre_archivo = ICONOS_ARCHIVO.get(sec_id, f"{sec_id}.png")
-        ruta = f"assets/iconos/{nombre_archivo}"
-        if os.path.exists(ruta):
-            b64 = _img_b64(ruta)
-            return f"<img src='data:image/png;base64,{b64}' style='width:{tamano}px; height:{tamano}px;' />"
+        """Si subiste el archivo correspondiente a assets/iconos/ (en png, jpg
+        o jpeg), lo muestra; si no, usa el emoji de respaldo — así nunca
+        rompe aunque falte algo o esté en otro formato."""
+        base = ICONOS_BASE.get(sec_id, sec_id)
+        ruta = _buscar_imagen(f"assets/iconos/{base}")
+        if ruta:
+            return f"<img src='{_img_datauri(ruta)}' style='width:{tamano}px; height:{tamano}px;' />"
         return f"<span style='font-size:{tamano - 8}px;'>{emoji_respaldo}</span>"
 
     def _menu_cuadrados(items, prefijo):
