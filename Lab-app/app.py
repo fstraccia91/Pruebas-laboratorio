@@ -108,13 +108,14 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header [data-testid="stToolbar"] {visibility: hidden;}
+    header {height: 0 !important; min-height: 0 !important; visibility: hidden;}
 
     html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
 
     /* En monitores grandes, no estirar el contenido de punta a punta: más cómodo de leer */
     .block-container {
         max-width: 1100px;
-        padding-top: 2rem;
+        padding-top: 3.2rem;
         padding-bottom: 3rem;
     }
 
@@ -232,6 +233,22 @@ def titulo_seccion(titulo, icono=""):
         <div style='font-size:1.55rem; font-weight:700; color:#14504A; word-break:break-word;
                      font-family:"Space Grotesk","IBM Plex Sans",sans-serif; margin-bottom:14px;'>
             {icono} {titulo}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def subtitulo_con_icono(titulo, icono_html):
+    """Título de la sección activa (Usar, Chequear...) — un escalón más chico
+    que titulo_seccion, para marcar que está un nivel por debajo del nombre
+    de la familia. Acepta el ícono como HTML (imagen o emoji)."""
+    st.markdown(
+        f"""
+        <div style='display:flex; align-items:center; gap:8px; font-size:1.2rem; font-weight:600;
+                     color:#16211F; margin-bottom:12px; word-break:break-word;'>
+            <span style='display:flex; flex-shrink:0;'>{icono_html}</span>
+            <span>{titulo}</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -611,13 +628,13 @@ def render_familia(familia_id):
         else:
             nombre_sub = next(lbl for sid, ico, lbl in secciones_labo if sid == subseccion)
             icono_sub = next(ico for sid, ico, lbl in secciones_labo if sid == subseccion)
-            st.subheader(f"{icono_sub} {nombre_sub}")
+            subtitulo_con_icono(nombre_sub, _icono_seccion_html(subseccion, icono_sub, tamano=28))
             renderers[subseccion]()
 
     else:
         nombre_seccion = next(lbl for sid, ico, lbl in secciones_principales if sid == seccion)
         icono_seccion = next(ico for sid, ico, lbl in secciones_principales if sid == seccion)
-        st.subheader(f"{icono_seccion} {nombre_seccion}")
+        subtitulo_con_icono(nombre_seccion, _icono_seccion_html(seccion, icono_seccion, tamano=28))
         renderers[seccion]()
 
     st.markdown(
