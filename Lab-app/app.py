@@ -149,6 +149,12 @@ st.markdown("""
         box-shadow: none;
     }
 
+    /* Menos aire entre las líneas de las tarjetas de ítem (nombre,
+       CAS/litros, botón) — quedaban con mucho espacio suelto entre medio */
+    div[class*="st-key-tarjeta_"] [data-testid="stVerticalBlock"] {
+        gap: 0.4rem;
+    }
+
     /* Inputs numéricos y de texto un poco más altos, mismo motivo */
     .stTextInput input, .stNumberInput input, .stSelectbox [data-baseweb="select"] {
         min-height: 2.6rem;
@@ -336,8 +342,8 @@ def fila_titulo_pictogramas(titulo_html, riesgos_str, tamano_picto=24):
 
 def tarjeta_item(item, key_prefix, favorito=False):
     """Tarjeta de ítem para Usar/Chequear: nombre + pictogramas + estrella en
-    la primera línea, CAS/N° de parte en la segunda, litros + estado en la
-    tercera. Devuelve (se_tocó_seleccionar, se_tocó_favorito)."""
+    la primera línea, CAS/N° de parte a la izquierda y litros + estado a la
+    derecha en la segunda línea. Devuelve (se_tocó_seleccionar, se_tocó_favorito)."""
     stock = item_stock(item["id"])
     nombre_html = f"<span style='font-weight:600; font-size:0.95rem;'>{item['nombre']}</span>"
 
@@ -352,13 +358,17 @@ def tarjeta_item(item, key_prefix, favorito=False):
                 help="Quitar de favoritos" if favorito else "Marcar como favorito",
             )
 
+        cas_html = ""
         if item.get("cas"):
             etiqueta_id = etiqueta_identificador(item.get("familia_id"))
-            st.caption(f"{etiqueta_id} {item['cas']}")
-
+            cas_html = f"<span style='color:#5C6B67; font-size:0.8rem;'>{etiqueta_id} {item['cas']}</span>"
+        stock_html = (
+            f"<span style='color:#5C6B67; font-size:0.85rem;'>"
+            f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}</span>"
+        )
         st.markdown(
-            f"<div style='color:#5C6B67; font-size:0.85rem;'>"
-            f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}</div>",
+            f"<div style='display:flex; justify-content:space-between; align-items:baseline; "
+            f"flex-wrap:wrap; gap:4px; margin-top:2px;'>{cas_html}{stock_html}</div>",
             unsafe_allow_html=True,
         )
         click_seleccionar = st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True, type="primary")
