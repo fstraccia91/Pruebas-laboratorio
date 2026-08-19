@@ -52,11 +52,18 @@ def elegir_lote(lotes, item, key_prefix):
     for idx, l in enumerate(lotes):
         stock_l = lote_stock(l["id"], l["stock_inicial"])
         elegido = st.session_state[sel_key] == l["id"]
+        titulo_html = (
+            f"<span style='font-weight:600; font-size:0.95rem;'>{l['marca']}</span> "
+            f"<span style='color:#5C6B67; font-weight:400; font-size:0.95rem;'>"
+            f"· Lote {l['lote']} · {l['envase']}</span>"
+        )
         with cols[idx % len(cols)]:
             with st.container(border=True):
-                st.markdown(f"**{l['marca']}**")
-                st.caption(f"Lote {l['lote']} · {l['envase']}")
-                st.write(f"{stock_l} {item['unidad']}")
+                fila_titulo_pictogramas(titulo_html, item.get("riesgos"), tamano_picto=20)
+                st.markdown(
+                    f"<div style='color:#5C6B67; font-size:0.85rem; margin-top:4px;'>{stock_l} {item['unidad']}</div>",
+                    unsafe_allow_html=True,
+                )
                 if l.get("ubicacion"):
                     st.caption(f"📍 {l['ubicacion']}")
                 venc = etiqueta_vencimiento(l["fecha_vencimiento"])
@@ -156,33 +163,42 @@ def _rutas_pictogramas(riesgos_str):
     ]
 
 
-def tarjeta_item(item, key_prefix):
-    """Tarjeta de ítem para Usar/Chequear: nombre + CAS a la izquierda, stock +
-    estado debajo, pictogramas SIEMPRE a la derecha (con HTML/CSS, no con
-    columnas de Streamlit — las columnas se apilan solas en el celular, esto no).
-    Devuelve True si se tocó 'Seleccionar'."""
-    stock = item_stock(item["id"])
-    rutas = _rutas_pictogramas(item.get("riesgos"))
+def fila_titulo_pictogramas(titulo_html, riesgos_str, tamano_picto=24):
+    """Fila con el título a la izquierda y los pictogramas GHS a la derecha,
+    con HTML/CSS (no columnas de Streamlit, que se apilan en el celular).
+    Es la pieza visual compartida entre tarjeta_item, elegir_lote y la ficha
+    de gestión de Stock — un solo lugar para mantener el mismo estilo."""
+    rutas = _rutas_pictogramas(riesgos_str)
     pictos_html = "".join(
         f"<img src='data:image/png;base64,{_img_b64(r)}' "
-        f"style='width:24px; height:24px; margin-left:4px;' />"
+        f"style='width:{tamano_picto}px; height:{tamano_picto}px; margin-left:4px;' />"
         for r in rutas
     )
-    nombre_html = item["nombre"]
+    st.markdown(
+        f"""
+        <div style='display:flex; justify-content:space-between; align-items:flex-start; gap:6px;'>
+            <div>{titulo_html}</div>
+            <div style='display:flex; flex-shrink:0;'>{pictos_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def tarjeta_item(item, key_prefix):
+    """Tarjeta de ítem para Usar/Chequear: nombre + CAS a la izquierda, stock +
+    estado debajo, pictogramas siempre a la derecha. Devuelve True si se tocó
+    'Seleccionar'."""
+    stock = item_stock(item["id"])
+    nombre_html = f"<span style='font-weight:600; font-size:0.95rem;'>{item['nombre']}</span>"
     if item.get("cas"):
-        nombre_html += f" <span style='color:#5C6B67; font-weight:400;'>· CAS {item['cas']}</span>"
+        nombre_html += f" <span style='color:#5C6B67; font-weight:400; font-size:0.95rem;'>· CAS {item['cas']}</span>"
 
     with st.container(border=True):
+        fila_titulo_pictogramas(nombre_html, item.get("riesgos"))
         st.markdown(
-            f"""
-            <div style='display:flex; justify-content:space-between; align-items:flex-start; gap:6px;'>
-                <div style='font-weight:600; font-size:0.95rem;'>{nombre_html}</div>
-                <div style='display:flex; flex-shrink:0;'>{pictos_html}</div>
-            </div>
-            <div style='color:#5C6B67; font-size:0.85rem; margin-top:4px;'>
-                {stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}
-            </div>
-            """,
+            f"<div style='color:#5C6B67; font-size:0.85rem; margin-top:4px;'>"
+            f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}</div>",
             unsafe_allow_html=True,
         )
         return st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True)
@@ -221,8 +237,8 @@ def _pantalla_ingreso():
 
     clave_correcta = os.environ.get("APP_PASSWORD")
 
-    st.markdown(f"<h2 style='text-align:center; margin-top:8vh;'>🧪 {NOMBRE_SOFTWARE}</h2>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center; color:#5C6B67;'>{NOMBRE_LABORATORIO}</p>", unsafe_allow_html=True)
+    linea_marca(NOMBRE_SOFTWARE, centrado=True, tamano="1rem", tamano_logo=44)
+    st.markdown(f"<p style='text-align:center; color:#5C6B67; margin-top:-10px;'>{NOMBRE_LABORATORIO}</p>", unsafe_allow_html=True)
 
     clave_ingresada = None
     if clave_correcta:
@@ -327,13 +343,11 @@ if "stock_modo_gestion" not in st.session_state:
 
 
 def render_home():
-    top1, top2 = st.columns([5, 1])
-    with top2:
-        st.caption(f"👤 {st.session_state.analista_actual}")
-        if st.button("Cambiar", use_container_width=True):
-            st.session_state.analista_actual = None
-            st.rerun()
-    encabezado_marca(f"{NOMBRE_SOFTWARE} · {VERSION_SOFTWARE}", NOMBRE_LABORATORIO, "🧪")
+    linea_marca(f"{NOMBRE_SOFTWARE} · {VERSION_SOFTWARE}", tamano="1rem", tamano_logo=38)
+    if st.button("👤 Cambiar de persona"):
+        st.session_state.analista_actual = None
+        st.rerun()
+    titulo_seccion(NOMBRE_LABORATORIO, "🧪")
     st.caption(f"{SUBTITULO_LABORATORIO} · Panel de Insumos")
     st.caption("Elegí qué stock querés ver. Cada familia se controla por separado.")
 
@@ -374,22 +388,33 @@ def render_home():
     st.caption(f"🔌 Base de datos conectada: {url_conectada}")
 
 
-def encabezado_marca(linea_chica, titulo, icono=""):
-    """Logo + texto chico en una fila (con HTML/CSS, para que quede al lado
-    siempre, incluso en el celular), y el título apenas más grande debajo."""
+def linea_marca(texto, centrado=False, tamano="0.95rem", tamano_logo=34):
+    """Logo + texto en una fila (HTML/CSS, no columnas, para que quede al lado
+    siempre, incluso en el celular). Se usa igual en la pantalla de entrada y
+    dentro de la app, para que se vean consistentes entre sí."""
     logo_html = ""
     if os.path.exists("assets/logo_inti.png"):
         _logo_b64 = _img_b64("assets/logo_inti.png")
         logo_html = (
             f"<img src='data:image/png;base64,{_logo_b64}' "
-            f"style='width:34px; height:34px; margin-right:8px; border-radius:6px;' />"
+            f"style='width:{tamano_logo}px; height:{tamano_logo}px; margin-right:8px; border-radius:6px;' />"
         )
+    justificacion = "center" if centrado else "flex-start"
     st.markdown(
         f"""
-        <div style='display:flex; align-items:center; margin-bottom:6px;'>
+        <div style='display:flex; align-items:center; justify-content:{justificacion}; margin-bottom:6px;'>
             {logo_html}
-            <span style='font-size:0.9rem; color:#5C6B67; font-weight:500;'>{linea_chica}</span>
+            <span style='font-size:{tamano}; color:#5C6B67; font-weight:500;'>{texto}</span>
         </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def titulo_seccion(titulo, icono=""):
+    """Título grande (apenas más grande que linea_marca, no un st.title enorme)."""
+    st.markdown(
+        f"""
         <div style='font-size:1.55rem; font-weight:700; color:#14504A;
                      font-family:"Space Grotesk","IBM Plex Sans",sans-serif; margin-bottom:14px;'>
             {icono} {titulo}
@@ -405,32 +430,32 @@ def render_familia(familia_id):
     subseccion = st.session_state.subseccion_activa
     unica_familia = len([f for f in get_familias() if f["activo"]]) == 1
 
-    top1, top2 = st.columns([1, 6])
-    with top1:
+    linea_marca(f"{NOMBRE_SOFTWARE} · LCyEE", tamano="1rem", tamano_logo=38)
+
+    if subseccion:
+        label_volver = "← Menú"
+    elif seccion:
+        label_volver = "← Menú"
+    elif unica_familia:
+        label_volver = "👤 Cambiar de persona"
+    else:
+        label_volver = "← Volver"
+    if st.button(label_volver):
         if subseccion:
-            label_volver = "← Menú"
+            st.session_state.subseccion_activa = None
         elif seccion:
-            label_volver = "← Menú"
+            st.session_state.seccion_activa = None
         elif unica_familia:
-            label_volver = "👤 Cambiar de persona"
+            st.session_state.analista_actual = None
         else:
-            label_volver = "← Volver"
-        if st.button(label_volver):
-            if subseccion:
-                st.session_state.subseccion_activa = None
-            elif seccion:
-                st.session_state.seccion_activa = None
-            elif unica_familia:
-                st.session_state.analista_actual = None
-            else:
-                st.session_state.familia_id = None
-            st.session_state.item_id = None
-            st.session_state.item_chequeo_id = None
-            st.session_state.item_gestion_id = None
-            st.session_state.stock_modo_gestion = None
-            st.rerun()
-    with top2:
-        encabezado_marca(f"{NOMBRE_SOFTWARE} · LCyEE", fam["nombre"], fam["icono"])
+            st.session_state.familia_id = None
+        st.session_state.item_id = None
+        st.session_state.item_chequeo_id = None
+        st.session_state.item_gestion_id = None
+        st.session_state.stock_modo_gestion = None
+        st.rerun()
+
+    titulo_seccion(fam["nombre"], fam["icono"])
 
     secciones_principales = [
         ("usar", "📲", "Usar"),
@@ -472,7 +497,6 @@ def render_familia(familia_id):
         if elegido:
             st.session_state.seccion_activa = elegido[0]
             st.rerun()
-        panel_diagnostico()
 
     elif seccion == "gestion_labo":
         if subseccion is None:
@@ -746,13 +770,18 @@ def render_gestion_item(item):
         st.rerun()
 
     stock = item_stock(item["id"])
-    st.subheader(item["nombre"])
 
+    titulo_html = f"<span style='font-weight:700; font-size:1.4rem; font-family:\"Space Grotesk\",sans-serif;'>{item['nombre']}</span>"
     if item.get("cas"):
-        st.caption(f"CAS: {item['cas']}")
-    mostrar_pictogramas(item.get("riesgos"), tamaño=36)
+        titulo_html += f" <span style='color:#5C6B67; font-weight:400; font-size:1rem;'>· CAS {item['cas']}</span>"
+    fila_titulo_pictogramas(titulo_html, item.get("riesgos"), tamano_picto=34)
 
-    st.metric("Stock total", f"{stock} {item['unidad']}", help=estado(stock, item["stock_minimo"]))
+    st.markdown(
+        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:1.8rem; font-weight:600; "
+        f"color:#14504A; margin:2px 0 2px;'>{stock} {item['unidad']}</div>"
+        f"<div style='color:#5C6B67; font-size:0.9rem; margin-bottom:12px;'>{estado(stock, item['stock_minimo'])}</div>",
+        unsafe_allow_html=True,
+    )
 
     lotes = get_lotes(item["id"])
     if lotes:
