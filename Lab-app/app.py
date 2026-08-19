@@ -1,14 +1,16 @@
 """
 Panel de Insumos — Laboratorio de Cromatografía y Ensayos Especiales (LCyEE)
 -----------------------------------------------------------------------------
-App en Streamlit para controlar stock y consumo de insumos de laboratorio,
-organizados por "familias" (Solventes, y en el futuro Sales, Consumibles
-cromatográficos, etc.) que nunca se mezclan entre sí.
+Pantallas de Streamlit del Sistema de Inventario de Laboratorio.
 
-Los datos viven en Supabase (Postgres), no en un archivo local — así
-sobreviven a los redeploys. Necesita dos variables de entorno:
-    SUPABASE_URL   → Project URL (Project Settings > API)
-    SUPABASE_KEY   → clave "anon public" (Project Settings > API)
+La lógica de negocio pura vive en logica.py y el acceso a la base de datos
+(Supabase) vive en datos.py — este archivo solo arma las pantallas, así que
+es la única parte que habría que reescribir si algún día se migra a otra
+interfaz (por ejemplo, Reflex).
+
+Necesita dos variables de entorno para conectar con Supabase:
+    SUPABASE_URL   -> Project URL (Project Settings > API)
+    SUPABASE_KEY   -> Secret key (Project Settings > API Keys)
 
 Cómo correrla localmente:
     pip install -r requirements.txt
@@ -17,336 +19,45 @@ Cómo correrla localmente:
 """
 
 import os
-import uuid
 from datetime import datetime, timedelta
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+from datos import (
+    ConfiguracionFaltante, init_db, get_familias, get_items, get_lotes, get_movimientos,
+    item_stock, lote_stock, ultimo_chequeo, anular_movimiento, contar_movimientos_lote,
+    eliminar_lote, contar_lotes_item, eliminar_item, registrar_chequeo, get_lote_inicial,
+    daily_consumption, stock_series, add_item, add_lote, get_envases, add_movimiento,
+    get_personas, add_persona, toggle_persona, delete_persona,
+)
+from logica import (
+    NOMBRE_LABORATORIO, SUBTITULO_LABORATORIO, NOMBRE_SOFTWARE, VERSION_SOFTWARE,
+    UNIDADES, VENTANAS, TIPOS_CARGA, convertir_unidad, dias_para_vencer,
+    etiqueta_vencimiento, estado, _color_estado,
+)
+
+
+import os
+
+
+import uuid
+
+
+from datetime import datetime, timedelta
+
+
+import pandas as pd
+
+
+import plotly.express as px
+
+
+import streamlit as st
+
+
 from supabase import create_client
-
-NOMBRE_LABORATORIO = "Laboratorio de Cromatografía y Ensayos Especiales (LCyEE)"
-SUBTITULO_LABORATORIO = "Red de laboratorios lácteos"
-NOMBRE_SOFTWARE = "Sistema de Inventario de Laboratorio"
-VERSION_SOFTWARE = "v1.0"
-UNIDADES = ["L", "mL", "kg", "g", "mg"]
-VENTANAS = [
-    (7, "7 días"), (14, "14 días"), (30, "30 días"),
-    (90, "3 meses"), (180, "6 meses"), (365, "1 año"),
-    (730, "2 años"), (1825, "5 años"), (3650, "10 años"),
-]
-
-# Factor de cada unidad respecto a la unidad base de su familia (L para volumen, kg para masa)
-_FACTOR_UNIDAD = {"L": 1, "mL": 0.001, "kg": 1, "g": 0.001, "mg": 0.000001}
-_FAMILIA_UNIDAD = {"L": "volumen", "mL": "volumen", "kg": "masa", "g": "masa", "mg": "masa"}
-TIPOS_CARGA = ["Compra", "Transferencia entre laboratorios", "Devolución", "Donación", "Otro"]
-
-
-def convertir_unidad(valor, desde, hasta):
-    """Convierte un valor entre unidades de la misma familia (L/mL o kg/g/mg)."""
-    if desde == hasta:
-        return valor
-    if _FAMILIA_UNIDAD.get(desde) != _FAMILIA_UNIDAD.get(hasta):
-        raise ValueError(f"No se puede convertir {desde} a {hasta}: son de familias distintas.")
-    return valor * _FACTOR_UNIDAD[desde] / _FACTOR_UNIDAD[hasta]
-
-
-# --------------------------------------------------------------------------
-# Conexión a Supabase
-# --------------------------------------------------------------------------
-
-@st.cache_resource
-def get_client():
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
-    if not url or not key:
-        st.error(
-            "Faltan las variables de entorno SUPABASE_URL y/o SUPABASE_KEY. "
-            "Configuralas antes de correr la app (ver Project Settings > API en Supabase)."
-        )
-        st.stop()
-    return create_client(url, key)
-
-
-def init_db():
-    """Con Supabase, las tablas ya se crean con el script SQL — acá solo
-    confirmamos que la conexión funciona."""
-    get_client()
-
-
-# --------------------------------------------------------------------------
-# Helpers de negocio
-# --------------------------------------------------------------------------
-
-def get_familias():
-    sb = get_client()
-    res = sb.table("familias").select("*").order("orden").execute()
-    return res.data
-
-
-def get_items(familia_id):
-    sb = get_client()
-    res = sb.table("items").select("*").eq("familia_id", familia_id).order("nombre").execute()
-    return res.data
-
-
-def get_lotes(item_id):
-    sb = get_client()
-    res = sb.table("lotes").select("*").eq("item_id", item_id).execute()
-    return res.data
-
-
-def get_movimientos(item_id=None):
-    sb = get_client()
-    q = sb.table("movimientos").select("*")
-    if item_id:
-        q = q.eq("item_id", item_id)
-    res = q.order("fecha", desc=True).execute()
-    return res.data
-
-
-def item_stock(item_id):
-    sb = get_client()
-    lotes = sb.table("lotes").select("stock_inicial").eq("item_id", item_id).execute().data
-    inicial = sum(l["stock_inicial"] or 0 for l in lotes)
-    movs = sb.table("movimientos").select("tipo,cantidad,anulado").eq("item_id", item_id).execute().data
-    entradas = sum(m["cantidad"] for m in movs if m["tipo"] == "in" and not m.get("anulado", False))
-    salidas = sum(m["cantidad"] for m in movs if m["tipo"] == "out" and not m.get("anulado", False))
-    ajustes = sum(m["cantidad"] for m in movs if m["tipo"] == "ajuste" and not m.get("anulado", False))
-    return round(inicial + entradas - salidas + ajustes, 2)
-
-
-def lote_stock(lote_id, stock_inicial):
-    sb = get_client()
-    movs = sb.table("movimientos").select("tipo,cantidad,anulado").eq("lote_id", lote_id).execute().data
-    entradas = sum(m["cantidad"] for m in movs if m["tipo"] == "in" and not m.get("anulado", False))
-    salidas = sum(m["cantidad"] for m in movs if m["tipo"] == "out" and not m.get("anulado", False))
-    ajustes = sum(m["cantidad"] for m in movs if m["tipo"] == "ajuste" and not m.get("anulado", False))
-    return round((stock_inicial or 0) + entradas - salidas + ajustes, 2)
-
-
-def ultimo_chequeo(lote_id):
-    sb = get_client()
-    res = (
-        sb.table("movimientos").select("fecha,analista")
-        .eq("lote_id", lote_id).eq("tipo", "ajuste").eq("anulado", False)
-        .order("fecha", desc=True).limit(1).execute()
-    )
-    return res.data[0] if res.data else None
-
-
-def anular_movimiento(mov_id, analista, motivo=""):
-    """Marca un movimiento como anulado. No se borra: queda visible en el historial
-    con quién y cuándo lo anuló, pero deja de contar para stock y consumo."""
-    sb = get_client()
-    sb.table("movimientos").update({
-        "anulado": True, "anulado_por": analista,
-        "anulado_fecha": datetime.now().isoformat(), "anulado_motivo": motivo,
-    }).eq("id", mov_id).execute()
-
-
-def contar_movimientos_lote(lote_id):
-    sb = get_client()
-    res = sb.table("movimientos").select("id", count="exact").eq("lote_id", lote_id).execute()
-    return res.count or 0
-
-
-def eliminar_lote(lote_id):
-    """Borra el lote, sus movimientos y sus envases individuales asociados. A diferencia
-    de anular, esto es irreversible: pensado para altas cargadas por error."""
-    sb = get_client()
-    sb.table("movimientos").delete().eq("lote_id", lote_id).execute()
-    sb.table("envases").delete().eq("lote_id", lote_id).execute()
-    sb.table("lotes").delete().eq("id", lote_id).execute()
-
-
-def contar_lotes_item(item_id):
-    sb = get_client()
-    res = sb.table("lotes").select("id", count="exact").eq("item_id", item_id).execute()
-    return res.count or 0
-
-
-def eliminar_item(item_id):
-    """Borra el ítem. Solo se debe llamar si ya no tiene lotes (se valida antes en la UI)."""
-    sb = get_client()
-    sb.table("movimientos").delete().eq("item_id", item_id).execute()
-    sb.table("envases").delete().eq("item_id", item_id).execute()
-    sb.table("items").delete().eq("id", item_id).execute()
-
-
-def registrar_chequeo(item_id, lote_id, stock_contado, analista, nota=""):
-    """Ajusta el lote al valor contado físicamente. No cuenta como consumo."""
-    stock_sistema = lote_stock(lote_id, get_lote_inicial(lote_id))
-    delta = round(stock_contado - stock_sistema, 2)
-    add_movimiento(
-        item_id, lote_id, "ajuste", delta, analista,
-        nota or f"Chequeo de inventario (sistema: {stock_sistema}, contado: {stock_contado})",
-    )
-    return delta
-
-
-def get_lote_inicial(lote_id):
-    sb = get_client()
-    res = sb.table("lotes").select("stock_inicial").eq("id", lote_id).execute()
-    return res.data[0]["stock_inicial"] if res.data else 0
-
-
-def daily_consumption(item_id, days):
-    sb = get_client()
-    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-    res = (
-        sb.table("movimientos").select("cantidad")
-        .eq("item_id", item_id).eq("tipo", "out").eq("anulado", False)
-        .gte("fecha", cutoff).execute()
-    )
-    total = sum(m["cantidad"] for m in res.data)
-    return total / days
-
-
-def stock_series(item, lotes):
-    sb = get_client()
-    movs = (
-        sb.table("movimientos").select("*")
-        .eq("item_id", item["id"]).eq("anulado", False)
-        .order("fecha").execute()
-    ).data
-    inicial = sum(l["stock_inicial"] or 0 for l in lotes)
-    running = inicial
-    rows = [{"fecha": str(item["creado"])[:10], "stock": running}]
-    for m in movs:
-        if m["tipo"] == "in":
-            running += m["cantidad"]
-        elif m["tipo"] == "out":
-            running -= m["cantidad"]
-        else:  # ajuste: la cantidad ya viene con signo (positivo o negativo)
-            running += m["cantidad"]
-        rows.append({"fecha": str(m["fecha"])[:10], "stock": round(running, 2)})
-    return pd.DataFrame(rows)
-
-
-def add_item(familia_id, nombre, unidad, minimo, creado_por="", cas=None):
-    sb = get_client()
-    sb.table("items").insert({
-        "id": str(uuid.uuid4()), "familia_id": familia_id, "nombre": nombre,
-        "unidad": unidad, "stock_minimo": minimo,
-        "creado": datetime.now().isoformat(), "creado_por": creado_por,
-        "cas": cas,
-    }).execute()
-
-
-def add_lote(item_id, marca, lote, envase, stock_inicial, creado_por="",
-             envase_valor=None, envase_unidad=None, cantidad_envases_inicial=None,
-             tipo_carga="Compra", fecha_vencimiento=None, ubicacion=None,
-             codigo_catalogo=None, sds_url=None):
-    """Crea el lote (con stock_inicial=0) y registra la carga inicial como un
-    movimiento real de tipo 'in', para que quede visible en Movimientos > Cargas."""
-    sb = get_client()
-    lote_id = str(uuid.uuid4())
-    sb.table("lotes").insert({
-        "id": lote_id, "item_id": item_id, "marca": marca, "lote": lote, "envase": envase,
-        "stock_inicial": 0, "creado": datetime.now().isoformat(), "creado_por": creado_por,
-        "envase_valor": envase_valor, "envase_unidad": envase_unidad,
-        "cantidad_envases_inicial": cantidad_envases_inicial,
-        "fecha_vencimiento": fecha_vencimiento, "ubicacion": ubicacion,
-        "codigo_catalogo": codigo_catalogo, "sds_url": sds_url,
-    }).execute()
-    if stock_inicial > 0:
-        nota = f"Alta de lote ({marca} · lote {lote})"
-        add_movimiento(item_id, lote_id, "in", stock_inicial, creado_por, nota, categoria=tipo_carga)
-    if cantidad_envases_inicial and cantidad_envases_inicial > 0:
-        _crear_envases_individuales(lote_id, item_id, int(cantidad_envases_inicial), creado_por)
-    return lote_id
-
-
-def dias_para_vencer(fecha_vencimiento):
-    """Días que faltan para vencer (negativo si ya venció). None si no tiene fecha cargada."""
-    if not fecha_vencimiento:
-        return None
-    venc = datetime.fromisoformat(str(fecha_vencimiento)).date()
-    return (venc - datetime.now().date()).days
-
-
-def etiqueta_vencimiento(fecha_vencimiento):
-    dias = dias_para_vencer(fecha_vencimiento)
-    if dias is None:
-        return "—"
-    fecha_fmt = datetime.fromisoformat(str(fecha_vencimiento)).strftime("%d/%m/%Y")
-    if dias < 0:
-        return f"🔴 Vencido ({fecha_fmt})"
-    if dias <= 60:
-        return f"🟠 Vence en {dias}d ({fecha_fmt})"
-    return f"🟢 {fecha_fmt}"
-
-
-def _crear_envases_individuales(lote_id, item_id, cantidad, creado_por):
-    """Crea un registro por cada envase físico del lote, con un ID único —
-    ese ID es lo que el día de mañana se codifica en el QR de cada envase."""
-    sb = get_client()
-    ahora = datetime.now().isoformat()
-    filas = [
-        {"id": str(uuid.uuid4()), "lote_id": lote_id, "item_id": item_id, "numero": numero,
-         "estado": "disponible", "creado": ahora, "creado_por": creado_por}
-        for numero in range(1, cantidad + 1)
-    ]
-    if filas:
-        sb.table("envases").insert(filas).execute()
-
-
-def get_envases(lote_id):
-    sb = get_client()
-    res = sb.table("envases").select("*").eq("lote_id", lote_id).order("numero").execute()
-    return res.data
-
-
-def add_movimiento(item_id, lote_id, tipo, cantidad, analista, nota, categoria=None):
-    sb = get_client()
-    sb.table("movimientos").insert({
-        "id": str(uuid.uuid4()), "item_id": item_id, "lote_id": lote_id, "tipo": tipo,
-        "cantidad": cantidad, "analista": analista, "nota": nota,
-        "fecha": datetime.now().isoformat(), "categoria": categoria,
-        "anulado": False, "anulado_por": None, "anulado_fecha": None, "anulado_motivo": None,
-    }).execute()
-
-
-def get_personas():
-    sb = get_client()
-    res = sb.table("personas").select("*").order("nombre").execute()
-    return res.data
-
-
-def add_persona(nombre):
-    sb = get_client()
-    sb.table("personas").insert({"id": str(uuid.uuid4()), "nombre": nombre, "activo": True}).execute()
-
-
-def toggle_persona(pid, activo):
-    sb = get_client()
-    sb.table("personas").update({"activo": not activo}).eq("id", pid).execute()
-
-
-def delete_persona(pid):
-    sb = get_client()
-    sb.table("personas").delete().eq("id", pid).execute()
-
-
-def estado(stock, minimo):
-    if stock <= 0:
-        return "🔴 Agotado"
-    if stock <= minimo:
-        return "🟠 Bajo"
-    return "🟢 OK"
-
-
-def _color_estado(val):
-    """Para usar con pandas Styler: pinta la celda según su texto (estado de stock o urgencia de compra)."""
-    texto = str(val)
-    if "Agotado" in texto or "Urgente" in texto:
-        return "background-color: #F5DEDA; color: #A6362B; font-weight: 600"
-    if "Bajo" in texto or "Anticipar" in texto:
-        return "background-color: #F6E4CC; color: #C97A2B; font-weight: 600"
-    if "OK" in texto:
-        return "background-color: #DCEAE7; color: #14504A; font-weight: 600"
-    return ""
 
 
 def elegir_lote(lotes, item, key_prefix):
@@ -384,11 +95,9 @@ def elegir_lote(lotes, item, key_prefix):
     return next(l for l in lotes if l["id"] == st.session_state[sel_key])
 
 
-# --------------------------------------------------------------------------
-# UI
-# --------------------------------------------------------------------------
-
 st.set_page_config(page_title=f"{NOMBRE_SOFTWARE} — LCyEE", page_icon="🧪", layout="wide")
+
+
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
@@ -435,6 +144,8 @@ st.markdown("""
 
 if "analista_actual" not in st.session_state:
     st.session_state.analista_actual = None
+
+
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
@@ -457,8 +168,12 @@ def _pantalla_ingreso():
         with c2:
             clave_ingresada = st.text_input("Contraseña del laboratorio", type="password", key="clave_acceso")
 
-    init_db()
-    personas_activas = [p for p in get_personas() if p["activo"]]
+    try:
+        init_db()
+        personas_activas = [p for p in get_personas() if p["activo"]]
+    except ConfiguracionFaltante as e:
+        st.error(str(e))
+        st.stop()
 
     st.markdown("<p style='text-align:center; font-weight:600; margin-top:1rem;'>👤 ¿Quién sos?</p>", unsafe_allow_html=True)
 
@@ -496,8 +211,10 @@ def _pantalla_ingreso():
 if not _pantalla_ingreso():
     st.stop()
 
+
 if "ir_aplicado" not in st.session_state:
     st.session_state.ir_aplicado = False
+
 
 if not st.session_state.ir_aplicado:
     _ir = st.query_params.get("ir")
@@ -510,24 +227,39 @@ if not st.session_state.ir_aplicado:
         st.session_state.subseccion_activa = _ir
     st.session_state.ir_aplicado = True
 
-init_db()
 
 if "familia_id" not in st.session_state:
     st.session_state.familia_id = None
+
+
 if "item_id" not in st.session_state:
     st.session_state.item_id = None
+
+
 if "confirmacion" not in st.session_state:
     st.session_state.confirmacion = None
+
+
 if "item_chequeo_id" not in st.session_state:
     st.session_state.item_chequeo_id = None
+
+
 if "confirmacion_chequeo" not in st.session_state:
     st.session_state.confirmacion_chequeo = None
+
+
 if "seccion_activa" not in st.session_state:
     st.session_state.seccion_activa = None
+
+
 if "subseccion_activa" not in st.session_state:
     st.session_state.subseccion_activa = None
+
+
 if "item_gestion_id" not in st.session_state:
     st.session_state.item_gestion_id = None
+
+
 if "stock_modo_gestion" not in st.session_state:
     st.session_state.stock_modo_gestion = None
 
