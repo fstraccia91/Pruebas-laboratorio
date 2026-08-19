@@ -341,22 +341,17 @@ def fila_titulo_pictogramas(titulo_html, riesgos_str, tamano_picto=24):
 
 
 def tarjeta_item(item, key_prefix, favorito=False):
-    """Tarjeta de ítem para Usar/Chequear: nombre + pictogramas + estrella en
-    la primera línea, CAS/N° de parte a la izquierda y litros + estado a la
-    derecha en la segunda línea. Devuelve (se_tocó_seleccionar, se_tocó_favorito)."""
+    """Tarjeta de ítem para Usar/Chequear: nombre + pictogramas en la primera
+    línea, CAS/N° de parte + litros/estado en la segunda, la estrella de
+    favorito en su propia línea chica (para que sea consistente en cualquier
+    tamaño de pantalla, sin depender de columnas de Streamlit — esas se
+    apilan según el ancho del celular, no según el espacio real de la tarjeta).
+    Devuelve (se_tocó_seleccionar, se_tocó_favorito)."""
     stock = item_stock(item["id"])
     nombre_html = f"<span style='font-weight:600; font-size:0.95rem;'>{item['nombre']}</span>"
 
     with st.container(border=True, key=f"tarjeta_{key_prefix}_{item['id']}"):
-        col_nombre, col_star = st.columns([5, 1])
-        with col_nombre:
-            fila_titulo_pictogramas(nombre_html, item.get("riesgos"))
-        with col_star:
-            click_favorito = st.button(
-                "⭐" if favorito else "☆",
-                key=f"{key_prefix}_fav_{item['id']}",
-                help="Quitar de favoritos" if favorito else "Marcar como favorito",
-            )
+        fila_titulo_pictogramas(nombre_html, item.get("riesgos"))
 
         cas_html = ""
         if item.get("cas"):
@@ -370,6 +365,11 @@ def tarjeta_item(item, key_prefix, favorito=False):
             f"<div style='display:flex; justify-content:space-between; align-items:baseline; "
             f"flex-wrap:wrap; gap:4px; margin-top:2px;'>{cas_html}{stock_html}</div>",
             unsafe_allow_html=True,
+        )
+        click_favorito = st.button(
+            "⭐" if favorito else "☆",
+            key=f"{key_prefix}_fav_{item['id']}",
+            help="Quitar de favoritos" if favorito else "Marcar como favorito",
         )
         click_seleccionar = st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True, type="primary")
         return click_seleccionar, click_favorito
