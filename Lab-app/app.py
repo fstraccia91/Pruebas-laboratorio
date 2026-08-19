@@ -224,20 +224,20 @@ def stock_series(item, lotes):
     return pd.DataFrame(rows)
 
 
-def add_item(familia_id, nombre, unidad, minimo, creado_por="",
-             codigo_catalogo=None, cas=None, sds_url=None):
+def add_item(familia_id, nombre, unidad, minimo, creado_por="", cas=None):
     sb = get_client()
     sb.table("items").insert({
         "id": str(uuid.uuid4()), "familia_id": familia_id, "nombre": nombre,
         "unidad": unidad, "stock_minimo": minimo,
         "creado": datetime.now().isoformat(), "creado_por": creado_por,
-        "codigo_catalogo": codigo_catalogo, "cas": cas, "sds_url": sds_url,
+        "cas": cas,
     }).execute()
 
 
 def add_lote(item_id, marca, lote, envase, stock_inicial, creado_por="",
              envase_valor=None, envase_unidad=None, cantidad_envases_inicial=None,
-             tipo_carga="Compra", fecha_vencimiento=None, ubicacion=None):
+             tipo_carga="Compra", fecha_vencimiento=None, ubicacion=None,
+             codigo_catalogo=None, sds_url=None):
     """Crea el lote (con stock_inicial=0) y registra la carga inicial como un
     movimiento real de tipo 'in', para que quede visible en Movimientos > Cargas."""
     sb = get_client()
@@ -248,6 +248,7 @@ def add_lote(item_id, marca, lote, envase, stock_inicial, creado_por="",
         "envase_valor": envase_valor, "envase_unidad": envase_unidad,
         "cantidad_envases_inicial": cantidad_envases_inicial,
         "fecha_vencimiento": fecha_vencimiento, "ubicacion": ubicacion,
+        "codigo_catalogo": codigo_catalogo, "sds_url": sds_url,
     }).execute()
     if stock_inicial > 0:
         nota = f"Alta de lote ({marca} · lote {lote})"
@@ -370,6 +371,8 @@ def elegir_lote(lotes, item, key_prefix):
                 venc = etiqueta_vencimiento(l["fecha_vencimiento"])
                 if venc != "—":
                     st.caption(venc)
+                if l.get("sds_url"):
+                    st.markdown(f"[📄 SDS]({l['sds_url']})")
                 if st.button(
                     "✓ Elegido" if elegido else "Elegir",
                     key=f"{key_prefix}_lotebtn_{l['id']}",
@@ -437,56 +440,56 @@ if "autenticado" not in st.session_state:
 
 
 def _pantalla_ingreso():
-    """Pantalla única de entrada: contraseña (si hay una configurada) y, apenas es
-    correcta, el selector de persona aparece debajo — sin cambiar de pantalla ni
-    botones intermedios. Una vez elegida la persona, queda identificada toda la
-    sesión (hasta cerrar el navegador o tocar 'Cambiar de persona')."""
+    """Pantalla única de entrada: la contraseña (si hay una configurada) y el
+    selector de persona se muestran juntos, en el mismo render. La validación
+    de la contraseña ocurre recién al tocar tu nombre — un solo toque en total."""
     if st.session_state.analista_actual:
         return True
 
     clave_correcta = os.environ.get("APP_PASSWORD")
-    clave_requerida = bool(clave_correcta) and not st.session_state.autenticado
 
-    st.markdown(f"<h2 style='text-align:center; margin-top:12vh;'>🧪 {NOMBRE_SOFTWARE}</h2>", unsafe_allow_html=True)
+    st.markdown(f"<h2 style='text-align:center; margin-top:8vh;'>🧪 {NOMBRE_SOFTWARE}</h2>", unsafe_allow_html=True)
     st.markdown(f"<p style='text-align:center; color:#5C6B67;'>{NOMBRE_LABORATORIO}</p>", unsafe_allow_html=True)
 
-    if clave_requerida:
+    clave_ingresada = None
+    if clave_correcta:
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
             clave_ingresada = st.text_input("Contraseña del laboratorio", type="password", key="clave_acceso")
-            if st.button("Ingresar", use_container_width=True, type="primary"):
-                if clave_ingresada == clave_correcta:
-                    st.session_state.autenticado = True
-                    st.rerun()
-                else:
-                    st.error("Contraseña incorrecta.")
-        return False
 
-    # Clave ya validada (o no hace falta ninguna): mostrar el selector de persona,
-    # en la misma pantalla, sin ningún paso intermedio.
     init_db()
     personas_activas = [p for p in get_personas() if p["activo"]]
 
-    st.markdown("<p style='text-align:center; font-weight:600;'>👤 ¿Quién sos?</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center; font-weight:600; margin-top:1rem;'>👤 ¿Quién sos?</p>", unsafe_allow_html=True)
+
+    def _clave_ok():
+        if clave_correcta and clave_ingresada != clave_correcta:
+            st.error("Contraseña incorrecta.")
+            return False
+        return True
+
     if personas_activas:
         cols = st.columns(3)
         for idx, p in enumerate(personas_activas):
             with cols[idx % 3]:
                 if st.button(p["nombre"], key=f"perfil_{p['id']}", use_container_width=True, type="primary"):
-                    st.session_state.analista_actual = p["nombre"]
-                    st.rerun()
+                    if _clave_ok():
+                        st.session_state.autenticado = True
+                        st.session_state.analista_actual = p["nombre"]
+                        st.rerun()
     else:
         st.info("Todavía no hay ningún analista cargado. Agregate como el primero abajo.")
 
     with st.expander("+ Soy nuevo/a, agregarme"):
         nombre_nuevo = st.text_input("Tu nombre completo", key="nuevo_perfil_nombre")
         if st.button("Agregar y continuar", key="nuevo_perfil_btn", type="primary"):
-            if nombre_nuevo.strip():
+            if not nombre_nuevo.strip():
+                st.error("Ingresá un nombre.")
+            elif _clave_ok():
                 add_persona(nombre_nuevo.strip())
+                st.session_state.autenticado = True
                 st.session_state.analista_actual = nombre_nuevo.strip()
                 st.rerun()
-            else:
-                st.error("Ingresá un nombre.")
     return False
 
 
@@ -704,6 +707,8 @@ def render_usar(familia_id):
             with cols[i % 3]:
                 with st.container(border=True):
                     st.markdown(f"**{it['nombre']}**")
+                    if it.get("cas"):
+                        st.caption(f"CAS {it['cas']}")
                     st.write(f"{stock} {it['unidad']} · {estado(stock, it['stock_minimo'])}")
                     if st.button("Seleccionar", key=f"sel_usar_{it['id']}", use_container_width=True):
                         st.session_state.item_id = it["id"]
@@ -786,6 +791,8 @@ def render_chequear(familia_id):
             with cols[i % 3]:
                 with st.container(border=True):
                     st.markdown(f"**{it['nombre']}**")
+                    if it.get("cas"):
+                        st.caption(f"CAS {it['cas']}")
                     st.write(f"{stock} {it['unidad']} · {estado(stock, it['stock_minimo'])}")
                     if st.button("Seleccionar", key=f"sel_chk_{it['id']}", use_container_width=True):
                         st.session_state.item_chequeo_id = it["id"]
@@ -881,24 +888,17 @@ def render_stock(familia_id):
                                 file_name=f"stock_{familia_id}.csv", mime="text/csv")
 
     with st.expander("➕ Nuevo ítem"):
-        c1, c2, c3 = st.columns([2, 1, 1])
+        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
         nombre = c1.text_input("Nombre (ej: Acetona HPLC)", key="new_item_nombre")
         unidad = c2.selectbox("Unidad", UNIDADES, key="new_item_unidad")
         minimo = c3.number_input("Stock mínimo", min_value=0.0, step=1.0, key="new_item_min")
-
-        st.caption("Datos opcionales, para identificar el reactivo con más precisión:")
-        d1, d2, d3 = st.columns(3)
-        codigo_catalogo = d1.text_input("N° de catálogo del proveedor", key="new_item_catalogo")
-        cas = d2.text_input("N° CAS", key="new_item_cas")
-        sds_url = d3.text_input("Link a hoja de seguridad (SDS)", key="new_item_sds")
+        cas = c4.text_input("N° CAS (opcional)", key="new_item_cas")
 
         if st.button("Guardar ítem"):
             if nombre.strip():
                 add_item(
                     familia_id, nombre.strip(), unidad, minimo, st.session_state.analista_actual,
-                    codigo_catalogo=codigo_catalogo.strip() or None,
                     cas=cas.strip() or None,
-                    sds_url=sds_url.strip() or None,
                 )
                 st.success(f"'{nombre}' creado. Ahora agregale un lote.")
                 st.rerun()
@@ -940,15 +940,8 @@ def render_gestion_item(item):
     stock = item_stock(item["id"])
     st.subheader(item["nombre"])
 
-    info_extra = []
-    if item.get("codigo_catalogo"):
-        info_extra.append(f"Catálogo: {item['codigo_catalogo']}")
     if item.get("cas"):
-        info_extra.append(f"CAS: {item['cas']}")
-    if info_extra:
-        st.caption(" · ".join(info_extra))
-    if item.get("sds_url"):
-        st.markdown(f"[📄 Hoja de seguridad (SDS)]({item['sds_url']})")
+        st.caption(f"CAS: {item['cas']}")
 
     st.metric("Stock total", f"{stock} {item['unidad']}", help=estado(stock, item["stock_minimo"]))
 
@@ -959,6 +952,8 @@ def render_gestion_item(item):
             "Contenido c/u": f"{l['envase_valor']:g} {l['envase_unidad']}" if l["envase_valor"] else "—",
             "Stock actual": lote_stock(l["id"], l["stock_inicial"]),
             "Ubicación": l.get("ubicacion") or "—",
+            "N° catálogo": l.get("codigo_catalogo") or "—",
+            "SDS": l.get("sds_url") or None,
             "Vencimiento": etiqueta_vencimiento(l["fecha_vencimiento"]),
             "Último chequeo": (
                 f"{ultimo_chequeo(l['id'])['fecha'][:10]} ({ultimo_chequeo(l['id'])['analista']})"
@@ -966,7 +961,10 @@ def render_gestion_item(item):
             ),
             "Dado de alta por": l["creado_por"] or "—",
         } for l in lotes])
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(
+            df, hide_index=True, use_container_width=True,
+            column_config={"SDS": st.column_config.LinkColumn("SDS", display_text="📄 Ver")},
+        )
     else:
         st.caption("Sin lotes todavía.")
 
@@ -1022,6 +1020,11 @@ def render_gestion_item(item):
             "Ubicación física (ej: Heladera 2 · Estante B)", key=f"ubicacion_{item['id']}"
         )
 
+        st.caption("Datos de este proveedor/marca en particular (opcional):")
+        p1, p2 = st.columns(2)
+        codigo_catalogo = p1.text_input("N° de catálogo del proveedor", key=f"catalogo_{item['id']}")
+        sds_url = p2.text_input("Link a hoja de seguridad (SDS)", key=f"sds_{item['id']}")
+
         if st.button("Guardar lote", key=f"addlote_{item['id']}", type="primary"):
             if not (marca.strip() and lote_n.strip()):
                 st.error("Completá marca y n° de lote.")
@@ -1035,6 +1038,7 @@ def render_gestion_item(item):
                     st.session_state.analista_actual, envase_valor=contenido, envase_unidad=unidad_contenido,
                     cantidad_envases_inicial=cant_envases, tipo_carga=tipo_carga_nuevo,
                     fecha_vencimiento=fecha_venc, ubicacion=ubicacion.strip() or None,
+                    codigo_catalogo=codigo_catalogo.strip() or None, sds_url=sds_url.strip() or None,
                 )
                 st.session_state.stock_modo_gestion = None
                 st.rerun()
