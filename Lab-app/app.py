@@ -167,6 +167,30 @@ def mostrar_pictogramas(riesgos_str, tamaño=26):
             col.image(ruta, width=tamaño)
 
 
+def panel_diagnostico():
+    with st.expander("🔧 Diagnóstico de imágenes (logo y pictogramas)"):
+        st.caption(f"Carpeta desde donde corre la app: `{os.getcwd()}`")
+
+        existe_assets = os.path.isdir("assets")
+        st.write(f"{'✅' if existe_assets else '❌'} Carpeta `assets/` {'encontrada' if existe_assets else 'NO encontrada'}")
+        if existe_assets:
+            st.caption("Contenido de assets/: " + (", ".join(os.listdir("assets")) or "(vacía)"))
+
+        existe_logo = os.path.exists("assets/logo_inti.png")
+        st.write(f"{'✅' if existe_logo else '❌'} `assets/logo_inti.png` {'encontrado' if existe_logo else 'NO encontrado'}")
+
+        existe_ghs = os.path.isdir("assets/ghs")
+        st.write(f"{'✅' if existe_ghs else '❌'} Carpeta `assets/ghs/` {'encontrada' if existe_ghs else 'NO encontrada'}")
+        if existe_ghs:
+            st.caption("Contenido de assets/ghs/: " + (", ".join(os.listdir("assets/ghs")) or "(vacía)"))
+
+        st.markdown("**Cada pictograma esperado:**")
+        for clave, (etiqueta, archivo) in RIESGOS_GHS.items():
+            ruta = f"assets/ghs/{archivo}"
+            existe = os.path.exists(ruta)
+            st.write(f"{'✅' if existe else '❌'} {etiqueta} → `{ruta}`")
+
+
 def _pantalla_ingreso():
     """Pantalla única de entrada: la contraseña (si hay una configurada) y el
     selector de persona se muestran juntos, en el mismo render. La validación
@@ -338,28 +362,6 @@ def render_home():
     url_conectada = os.environ.get("SUPABASE_URL", "(sin configurar)")
     st.caption(f"🔌 Base de datos conectada: {url_conectada}")
 
-    with st.expander("🔧 Diagnóstico de imágenes (logo y pictogramas)"):
-        st.caption(f"Carpeta desde donde corre la app: `{os.getcwd()}`")
-
-        existe_assets = os.path.isdir("assets")
-        st.write(f"{'✅' if existe_assets else '❌'} Carpeta `assets/` {'encontrada' if existe_assets else 'NO encontrada'}")
-        if existe_assets:
-            st.caption("Contenido de assets/: " + ", ".join(os.listdir("assets")) or "(vacía)")
-
-        existe_logo = os.path.exists("assets/logo_inti.png")
-        st.write(f"{'✅' if existe_logo else '❌'} `assets/logo_inti.png` {'encontrado' if existe_logo else 'NO encontrado'}")
-
-        existe_ghs = os.path.isdir("assets/ghs")
-        st.write(f"{'✅' if existe_ghs else '❌'} Carpeta `assets/ghs/` {'encontrada' if existe_ghs else 'NO encontrada'}")
-        if existe_ghs:
-            st.caption("Contenido de assets/ghs/: " + (", ".join(os.listdir("assets/ghs")) or "(vacía)"))
-
-        st.markdown("**Cada pictograma esperado:**")
-        for clave, (etiqueta, archivo) in RIESGOS_GHS.items():
-            ruta = f"assets/ghs/{archivo}"
-            existe = os.path.exists(ruta)
-            st.write(f"{'✅' if existe else '❌'} {etiqueta} → `{ruta}`")
-
 
 def render_familia(familia_id):
     fam = next(f for f in get_familias() if f["id"] == familia_id)
@@ -392,7 +394,11 @@ def render_familia(familia_id):
             st.session_state.stock_modo_gestion = None
             st.rerun()
     with top2:
-        st.title(f"{fam['icono']} {fam['nombre']}")
+        logo_col, titulo_col = st.columns([1, 8])
+        if os.path.exists("assets/logo_inti.png"):
+            logo_col.image("assets/logo_inti.png", width=50)
+        with titulo_col:
+            st.title(f"{fam['icono']} {fam['nombre']}")
         st.caption("LCyEE")
 
     secciones_principales = [
@@ -435,6 +441,7 @@ def render_familia(familia_id):
         if elegido:
             st.session_state.seccion_activa = elegido[0]
             st.rerun()
+        panel_diagnostico()
 
     elif seccion == "gestion_labo":
         if subseccion is None:
