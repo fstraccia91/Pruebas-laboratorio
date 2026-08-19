@@ -224,18 +224,20 @@ def stock_series(item, lotes):
     return pd.DataFrame(rows)
 
 
-def add_item(familia_id, nombre, unidad, minimo, creado_por=""):
+def add_item(familia_id, nombre, unidad, minimo, creado_por="",
+             codigo_catalogo=None, cas=None, sds_url=None):
     sb = get_client()
     sb.table("items").insert({
         "id": str(uuid.uuid4()), "familia_id": familia_id, "nombre": nombre,
         "unidad": unidad, "stock_minimo": minimo,
         "creado": datetime.now().isoformat(), "creado_por": creado_por,
+        "codigo_catalogo": codigo_catalogo, "cas": cas, "sds_url": sds_url,
     }).execute()
 
 
 def add_lote(item_id, marca, lote, envase, stock_inicial, creado_por="",
              envase_valor=None, envase_unidad=None, cantidad_envases_inicial=None,
-             tipo_carga="Compra", fecha_vencimiento=None):
+             tipo_carga="Compra", fecha_vencimiento=None, ubicacion=None):
     """Crea el lote (con stock_inicial=0) y registra la carga inicial como un
     movimiento real de tipo 'in', para que quede visible en Movimientos > Cargas."""
     sb = get_client()
@@ -245,7 +247,7 @@ def add_lote(item_id, marca, lote, envase, stock_inicial, creado_por="",
         "stock_inicial": 0, "creado": datetime.now().isoformat(), "creado_por": creado_por,
         "envase_valor": envase_valor, "envase_unidad": envase_unidad,
         "cantidad_envases_inicial": cantidad_envases_inicial,
-        "fecha_vencimiento": fecha_vencimiento,
+        "fecha_vencimiento": fecha_vencimiento, "ubicacion": ubicacion,
     }).execute()
     if stock_inicial > 0:
         nota = f"Alta de lote ({marca} · lote {lote})"
@@ -363,6 +365,8 @@ def elegir_lote(lotes, item, key_prefix):
                 st.markdown(f"**{l['marca']}**")
                 st.caption(f"Lote {l['lote']} · {l['envase']}")
                 st.write(f"{stock_l} {item['unidad']}")
+                if l.get("ubicacion"):
+                    st.caption(f"📍 {l['ubicacion']}")
                 venc = etiqueta_vencimiento(l["fecha_vencimiento"])
                 if venc != "—":
                     st.caption(venc)
@@ -426,75 +430,44 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def _verificar_contraseña():
-    """Pantalla de acceso con clave. Necesaria en plataformas donde la app queda
-    visible públicamente (la clave sale de una variable de entorno, nunca del código).
-    Si no hay clave configurada (ej: corriendo en tu compu), no bloquea nada."""
-    clave_correcta = os.environ.get("APP_PASSWORD")
-    if not clave_correcta:
-        return True
-    if st.session_state.get("autenticado"):
-        return True
-
-    st.markdown(f"<h2 style='text-align:center; margin-top:15vh;'>🧪 {NOMBRE_SOFTWARE}</h2>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center; color:#5C6B67;'>{NOMBRE_LABORATORIO}</p>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c2:
-        clave_ingresada = st.text_input("Contraseña del laboratorio", type="password", key="clave_acceso")
-        if st.button("Ingresar", use_container_width=True, type="primary"):
-            if clave_ingresada == clave_correcta:
-                st.session_state.autenticado = True
-                st.rerun()
-            else:
-                st.error("Contraseña incorrecta.")
-    return False
-
-
-if not _verificar_contraseña():
-    st.stop()
-
-init_db()
-
-if "familia_id" not in st.session_state:
-    st.session_state.familia_id = None
-if "item_id" not in st.session_state:
-    st.session_state.item_id = None
-if "confirmacion" not in st.session_state:
-    st.session_state.confirmacion = None
-if "item_chequeo_id" not in st.session_state:
-    st.session_state.item_chequeo_id = None
-if "confirmacion_chequeo" not in st.session_state:
-    st.session_state.confirmacion_chequeo = None
-if "seccion_activa" not in st.session_state:
-    st.session_state.seccion_activa = None
-if "subseccion_activa" not in st.session_state:
-    st.session_state.subseccion_activa = None
-if "item_gestion_id" not in st.session_state:
-    st.session_state.item_gestion_id = None
-if "stock_modo_gestion" not in st.session_state:
-    st.session_state.stock_modo_gestion = None
 if "analista_actual" not in st.session_state:
     st.session_state.analista_actual = None
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
 
 
-def _elegir_perfil():
-    """Pantalla de '¿Quién sos?': una vez elegido, ese analista queda identificado
-    para toda la sesión (hasta que cierre el navegador o toque 'Cambiar de persona').
-    Reemplaza tener que elegir el nombre en cada formulario."""
-    personas_activas = [p for p in get_personas() if p["activo"]]
-    nombres_activos = [p["nombre"] for p in personas_activas]
-
-    if st.session_state.analista_actual in nombres_activos:
+def _pantalla_ingreso():
+    """Pantalla única de entrada: contraseña (si hay una configurada) y, apenas es
+    correcta, el selector de persona aparece debajo — sin cambiar de pantalla ni
+    botones intermedios. Una vez elegida la persona, queda identificada toda la
+    sesión (hasta cerrar el navegador o tocar 'Cambiar de persona')."""
+    if st.session_state.analista_actual:
         return True
 
-    st.session_state.analista_actual = None
-    st.markdown(f"<h2 style='text-align:center; margin-top:10vh;'>👤 ¿Quién sos?</h2>", unsafe_allow_html=True)
-    st.markdown(
-        f"<p style='text-align:center; color:#5C6B67;'>{NOMBRE_LABORATORIO}<br>"
-        f"Elegí tu nombre — vas a quedar identificado hasta que cierres el navegador o cambies de persona.</p>",
-        unsafe_allow_html=True,
-    )
+    clave_correcta = os.environ.get("APP_PASSWORD")
+    clave_requerida = bool(clave_correcta) and not st.session_state.autenticado
 
+    st.markdown(f"<h2 style='text-align:center; margin-top:12vh;'>🧪 {NOMBRE_SOFTWARE}</h2>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:center; color:#5C6B67;'>{NOMBRE_LABORATORIO}</p>", unsafe_allow_html=True)
+
+    if clave_requerida:
+        c1, c2, c3 = st.columns([1, 1, 1])
+        with c2:
+            clave_ingresada = st.text_input("Contraseña del laboratorio", type="password", key="clave_acceso")
+            if st.button("Ingresar", use_container_width=True, type="primary"):
+                if clave_ingresada == clave_correcta:
+                    st.session_state.autenticado = True
+                    st.rerun()
+                else:
+                    st.error("Contraseña incorrecta.")
+        return False
+
+    # Clave ya validada (o no hace falta ninguna): mostrar el selector de persona,
+    # en la misma pantalla, sin ningún paso intermedio.
+    init_db()
+    personas_activas = [p for p in get_personas() if p["activo"]]
+
+    st.markdown("<p style='text-align:center; font-weight:600;'>👤 ¿Quién sos?</p>", unsafe_allow_html=True)
     if personas_activas:
         cols = st.columns(3)
         for idx, p in enumerate(personas_activas):
@@ -517,8 +490,43 @@ def _elegir_perfil():
     return False
 
 
-if not _elegir_perfil():
+if not _pantalla_ingreso():
     st.stop()
+
+if "ir_aplicado" not in st.session_state:
+    st.session_state.ir_aplicado = False
+
+if not st.session_state.ir_aplicado:
+    _ir = st.query_params.get("ir")
+    _secciones_top = {"usar", "chequear", "stock"}
+    _secciones_labo = {"movimientos", "compras", "graficos", "personas"}
+    if _ir in _secciones_top:
+        st.session_state.seccion_activa = _ir
+    elif _ir in _secciones_labo:
+        st.session_state.seccion_activa = "gestion_labo"
+        st.session_state.subseccion_activa = _ir
+    st.session_state.ir_aplicado = True
+
+init_db()
+
+if "familia_id" not in st.session_state:
+    st.session_state.familia_id = None
+if "item_id" not in st.session_state:
+    st.session_state.item_id = None
+if "confirmacion" not in st.session_state:
+    st.session_state.confirmacion = None
+if "item_chequeo_id" not in st.session_state:
+    st.session_state.item_chequeo_id = None
+if "confirmacion_chequeo" not in st.session_state:
+    st.session_state.confirmacion_chequeo = None
+if "seccion_activa" not in st.session_state:
+    st.session_state.seccion_activa = None
+if "subseccion_activa" not in st.session_state:
+    st.session_state.subseccion_activa = None
+if "item_gestion_id" not in st.session_state:
+    st.session_state.item_gestion_id = None
+if "stock_modo_gestion" not in st.session_state:
+    st.session_state.stock_modo_gestion = None
 
 
 def render_home():
@@ -579,6 +587,7 @@ def render_familia(familia_id):
     fam = next(f for f in get_familias() if f["id"] == familia_id)
     seccion = st.session_state.seccion_activa
     subseccion = st.session_state.subseccion_activa
+    unica_familia = len([f for f in get_familias() if f["activo"]]) == 1
 
     top1, top2 = st.columns([1, 6])
     with top1:
@@ -586,6 +595,8 @@ def render_familia(familia_id):
             label_volver = "← Menú"
         elif seccion:
             label_volver = "← Menú"
+        elif unica_familia:
+            label_volver = "👤 Cambiar de persona"
         else:
             label_volver = "← Volver"
         if st.button(label_volver):
@@ -593,6 +604,8 @@ def render_familia(familia_id):
                 st.session_state.subseccion_activa = None
             elif seccion:
                 st.session_state.seccion_activa = None
+            elif unica_familia:
+                st.session_state.analista_actual = None
             else:
                 st.session_state.familia_id = None
             st.session_state.item_id = None
@@ -872,9 +885,21 @@ def render_stock(familia_id):
         nombre = c1.text_input("Nombre (ej: Acetona HPLC)", key="new_item_nombre")
         unidad = c2.selectbox("Unidad", UNIDADES, key="new_item_unidad")
         minimo = c3.number_input("Stock mínimo", min_value=0.0, step=1.0, key="new_item_min")
+
+        st.caption("Datos opcionales, para identificar el reactivo con más precisión:")
+        d1, d2, d3 = st.columns(3)
+        codigo_catalogo = d1.text_input("N° de catálogo del proveedor", key="new_item_catalogo")
+        cas = d2.text_input("N° CAS", key="new_item_cas")
+        sds_url = d3.text_input("Link a hoja de seguridad (SDS)", key="new_item_sds")
+
         if st.button("Guardar ítem"):
             if nombre.strip():
-                add_item(familia_id, nombre.strip(), unidad, minimo, st.session_state.analista_actual)
+                add_item(
+                    familia_id, nombre.strip(), unidad, minimo, st.session_state.analista_actual,
+                    codigo_catalogo=codigo_catalogo.strip() or None,
+                    cas=cas.strip() or None,
+                    sds_url=sds_url.strip() or None,
+                )
                 st.success(f"'{nombre}' creado. Ahora agregale un lote.")
                 st.rerun()
             else:
@@ -914,6 +939,17 @@ def render_gestion_item(item):
 
     stock = item_stock(item["id"])
     st.subheader(item["nombre"])
+
+    info_extra = []
+    if item.get("codigo_catalogo"):
+        info_extra.append(f"Catálogo: {item['codigo_catalogo']}")
+    if item.get("cas"):
+        info_extra.append(f"CAS: {item['cas']}")
+    if info_extra:
+        st.caption(" · ".join(info_extra))
+    if item.get("sds_url"):
+        st.markdown(f"[📄 Hoja de seguridad (SDS)]({item['sds_url']})")
+
     st.metric("Stock total", f"{stock} {item['unidad']}", help=estado(stock, item["stock_minimo"]))
 
     lotes = get_lotes(item["id"])
@@ -922,6 +958,7 @@ def render_gestion_item(item):
             "Marca": l["marca"], "Lote": l["lote"], "Envase": l["envase"],
             "Contenido c/u": f"{l['envase_valor']:g} {l['envase_unidad']}" if l["envase_valor"] else "—",
             "Stock actual": lote_stock(l["id"], l["stock_inicial"]),
+            "Ubicación": l.get("ubicacion") or "—",
             "Vencimiento": etiqueta_vencimiento(l["fecha_vencimiento"]),
             "Último chequeo": (
                 f"{ultimo_chequeo(l['id'])['fecha'][:10]} ({ultimo_chequeo(l['id'])['analista']})"
@@ -981,6 +1018,10 @@ def render_gestion_item(item):
             )
             fecha_venc = fecha_venc_dt.isoformat()
 
+        ubicacion = st.text_input(
+            "Ubicación física (ej: Heladera 2 · Estante B)", key=f"ubicacion_{item['id']}"
+        )
+
         if st.button("Guardar lote", key=f"addlote_{item['id']}", type="primary"):
             if not (marca.strip() and lote_n.strip()):
                 st.error("Completá marca y n° de lote.")
@@ -993,7 +1034,7 @@ def render_gestion_item(item):
                     item["id"], marca.strip(), lote_n.strip(), envase_desc.strip() or "—", total_calculado,
                     st.session_state.analista_actual, envase_valor=contenido, envase_unidad=unidad_contenido,
                     cantidad_envases_inicial=cant_envases, tipo_carga=tipo_carga_nuevo,
-                    fecha_vencimiento=fecha_venc,
+                    fecha_vencimiento=fecha_venc, ubicacion=ubicacion.strip() or None,
                 )
                 st.session_state.stock_modo_gestion = None
                 st.rerun()
@@ -1274,6 +1315,11 @@ def render_personas():
 
 
 if st.session_state.familia_id is None:
-    render_home()
+    _familias_activas = [f for f in get_familias() if f["activo"]]
+    if len(_familias_activas) == 1:
+        st.session_state.familia_id = _familias_activas[0]["id"]
+        st.rerun()
+    else:
+        render_home()
 else:
     render_familia(st.session_state.familia_id)
