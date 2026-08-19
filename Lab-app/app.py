@@ -28,7 +28,7 @@ import streamlit as st
 from datos import (
     ConfiguracionFaltante, init_db, get_familias, get_items, get_lotes, get_movimientos,
     item_stock, lote_stock, ultimo_chequeo, anular_movimiento, contar_movimientos_lote,
-    eliminar_lote, contar_lotes_item, eliminar_item, registrar_chequeo, get_lote_inicial,
+    eliminar_lote, contar_lotes_item, eliminar_item, update_item, registrar_chequeo, get_lote_inicial,
     daily_consumption, stock_series, add_item, add_lote, get_envases, add_movimiento,
     get_personas, add_persona, toggle_persona, delete_persona,
 )
@@ -732,17 +732,56 @@ def render_gestion_item(item):
         st.caption("Sin lotes todavía.")
 
     st.divider()
-    b1, b2, b3 = st.columns(3)
+    b1, b2, b3, b4 = st.columns(4)
     if b1.button("➕ Agregar lote", use_container_width=True, type="primary"):
         st.session_state.stock_modo_gestion = "agregar"
     if b2.button("📥 Cargar a lote existente", use_container_width=True, disabled=not lotes):
         st.session_state.stock_modo_gestion = "cargar"
     if b3.button("🗑️ Eliminar lote", use_container_width=True, disabled=not lotes):
         st.session_state.stock_modo_gestion = "eliminar"
+    if b4.button("✏️ Editar ítem", use_container_width=True):
+        st.session_state.stock_modo_gestion = "editar"
 
     modo = st.session_state.get("stock_modo_gestion")
 
-    if modo == "agregar":
+    if modo == "editar":
+        st.markdown("**✏️ Editar ítem**")
+        e1, e2, e3, e4 = st.columns([2, 1, 1, 1])
+        nuevo_nombre = e1.text_input("Nombre", value=item["nombre"], key=f"edit_nombre_{item['id']}")
+        nueva_unidad = e2.selectbox(
+            "Unidad", UNIDADES,
+            index=UNIDADES.index(item["unidad"]) if item["unidad"] in UNIDADES else 0,
+            key=f"edit_unidad_{item['id']}",
+        )
+        nuevo_minimo = e3.number_input(
+            "Stock mínimo", min_value=0.0, step=1.0, value=float(item["stock_minimo"]),
+            key=f"edit_minimo_{item['id']}",
+        )
+        nuevo_cas = e4.text_input("N° CAS", value=item.get("cas") or "", key=f"edit_cas_{item['id']}")
+
+        riesgos_actuales = (item.get("riesgos") or "").split(",") if item.get("riesgos") else []
+        nuevos_riesgos = st.multiselect(
+            "Clase de riesgo",
+            options=list(RIESGOS_GHS.keys()),
+            default=[r for r in riesgos_actuales if r in RIESGOS_GHS],
+            format_func=lambda k: RIESGOS_GHS[k][0],
+            key=f"edit_riesgos_{item['id']}",
+        )
+
+        if st.button("Guardar cambios", key=f"edit_guardar_{item['id']}", type="primary"):
+            if not nuevo_nombre.strip():
+                st.error("El nombre no puede quedar vacío.")
+            else:
+                update_item(
+                    item["id"],
+                    nombre=nuevo_nombre.strip(), unidad=nueva_unidad, stock_minimo=nuevo_minimo,
+                    cas=nuevo_cas.strip() or None, riesgos=nuevos_riesgos,
+                )
+                st.success("Ítem actualizado.")
+                st.session_state.stock_modo_gestion = None
+                st.rerun()
+
+    elif modo == "agregar":
         st.markdown("**➕ Agregar lote nuevo**")
         c1, c2, c3 = st.columns(3)
         marca = c1.text_input("Marca", key=f"marca_{item['id']}")

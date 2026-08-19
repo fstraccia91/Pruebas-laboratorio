@@ -139,6 +139,15 @@ def eliminar_item(item_id):
     sb.table("items").delete().eq("id", item_id).execute()
 
 
+def update_item(item_id, **campos):
+    """Actualiza cualquier combinación de campos del ítem (nombre, unidad,
+    stock_minimo, cas, riesgos...). 'riesgos' puede pasarse como lista."""
+    if "riesgos" in campos and isinstance(campos["riesgos"], list):
+        campos["riesgos"] = ",".join(campos["riesgos"]) if campos["riesgos"] else None
+    sb = get_client()
+    sb.table("items").update(campos).eq("id", item_id).execute()
+
+
 def registrar_chequeo(item_id, lote_id, stock_contado, analista, nota=""):
     """Ajusta el lote al valor contado físicamente. No cuenta como consumo."""
     stock_sistema = lote_stock(lote_id, get_lote_inicial(lote_id))
