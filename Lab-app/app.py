@@ -151,20 +151,49 @@ if "autenticado" not in st.session_state:
 
 
 def mostrar_pictogramas(riesgos_str, tamaño=26):
-    """Muestra los pictogramas GHS del ítem (si subiste las imágenes a
+    """Muestra los pictogramas GHS del ítem en fila (si subiste las imágenes a
     assets/ghs/). Si falta algún archivo, simplemente lo salta sin romper."""
-    if not riesgos_str:
-        return
-    claves = riesgos_str.split(",")
-    rutas = [
-        f"assets/ghs/{RIESGOS_GHS[c][1]}"
-        for c in claves
-        if c in RIESGOS_GHS and os.path.exists(f"assets/ghs/{RIESGOS_GHS[c][1]}")
-    ]
+    rutas = _rutas_pictogramas(riesgos_str)
     if rutas:
         cols = st.columns(len(rutas))
         for col, ruta in zip(cols, rutas):
             col.image(ruta, width=tamaño)
+
+
+def mostrar_pictogramas_apilados(riesgos_str, tamaño=22):
+    """Igual que mostrar_pictogramas, pero uno debajo del otro — pensado para
+    columnas angostas (al costado de una tarjeta), en vez de en fila."""
+    for ruta in _rutas_pictogramas(riesgos_str):
+        st.image(ruta, width=tamaño)
+
+
+def _rutas_pictogramas(riesgos_str):
+    if not riesgos_str:
+        return []
+    claves = riesgos_str.split(",")
+    return [
+        f"assets/ghs/{RIESGOS_GHS[c][1]}"
+        for c in claves
+        if c in RIESGOS_GHS and os.path.exists(f"assets/ghs/{RIESGOS_GHS[c][1]}")
+    ]
+
+
+def tarjeta_item(item, key_prefix):
+    """Tarjeta de ítem para Usar/Chequear: nombre + CAS en una línea, stock +
+    estado debajo, pictogramas a la derecha, botón Seleccionar abajo de todo.
+    Devuelve True si se tocó 'Seleccionar'."""
+    stock = item_stock(item["id"])
+    with st.container(border=True):
+        col_info, col_pict = st.columns([3, 1])
+        with col_info:
+            linea_nombre = f"**{item['nombre']}**"
+            if item.get("cas"):
+                linea_nombre += f" · CAS {item['cas']}"
+            st.markdown(linea_nombre)
+            st.write(f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}")
+        with col_pict:
+            mostrar_pictogramas_apilados(item.get("riesgos"))
+        return st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True)
 
 
 def panel_diagnostico():
@@ -312,17 +341,15 @@ def render_home():
         if st.button("Cambiar", use_container_width=True):
             st.session_state.analista_actual = None
             st.rerun()
+    if os.path.exists("assets/logo_inti.png"):
+        st.image("assets/logo_inti.png", width=70)
     st.markdown(
         f"<div style='display:inline-block; background:#DCEAE7; color:#14504A; "
         f"font-size:0.75rem; font-weight:600; padding:3px 10px; border-radius:999px; margin-bottom:8px;'>"
         f"{NOMBRE_SOFTWARE} · {VERSION_SOFTWARE}</div>",
         unsafe_allow_html=True,
     )
-    logo_col, titulo_col = st.columns([1, 8])
-    if os.path.exists("assets/logo_inti.png"):
-        logo_col.image("assets/logo_inti.png", width=70)
-    with titulo_col:
-        st.title(f"🧪 {NOMBRE_LABORATORIO}")
+    st.title(f"🧪 {NOMBRE_LABORATORIO}")
     st.caption(f"{SUBTITULO_LABORATORIO} · Panel de Insumos")
     st.caption("Elegí qué stock querés ver. Cada familia se controla por separado.")
 
@@ -394,12 +421,10 @@ def render_familia(familia_id):
             st.session_state.stock_modo_gestion = None
             st.rerun()
     with top2:
-        logo_col, titulo_col = st.columns([1, 8])
         if os.path.exists("assets/logo_inti.png"):
-            logo_col.image("assets/logo_inti.png", width=50)
-        with titulo_col:
-            st.title(f"{fam['icono']} {fam['nombre']}")
-        st.caption("LCyEE")
+            st.image("assets/logo_inti.png", width=64)
+        st.caption(f"{NOMBRE_SOFTWARE} · LCyEE")
+        st.title(f"{fam['icono']} {fam['nombre']}")
 
     secciones_principales = [
         ("usar", "📲", "Usar"),
@@ -485,17 +510,10 @@ def render_usar(familia_id):
             st.info("No hay ítems con stock disponible. Si algo se agotó, reponelo desde la pestaña Stock.")
         cols = st.columns(3)
         for i, it in enumerate(items):
-            stock = item_stock(it["id"])
             with cols[i % 3]:
-                with st.container(border=True):
-                    st.markdown(f"**{it['nombre']}**")
-                    if it.get("cas"):
-                        st.caption(f"CAS {it['cas']}")
-                    mostrar_pictogramas(it.get("riesgos"))
-                    st.write(f"{stock} {it['unidad']} · {estado(stock, it['stock_minimo'])}")
-                    if st.button("Seleccionar", key=f"sel_usar_{it['id']}", use_container_width=True):
-                        st.session_state.item_id = it["id"]
-                        st.rerun()
+                if tarjeta_item(it, key_prefix="sel_usar"):
+                    st.session_state.item_id = it["id"]
+                    st.rerun()
         return
 
     if st.button("← Elegir otro solvente"):
@@ -570,17 +588,10 @@ def render_chequear(familia_id):
         items = get_items(familia_id)
         cols = st.columns(3)
         for i, it in enumerate(items):
-            stock = item_stock(it["id"])
             with cols[i % 3]:
-                with st.container(border=True):
-                    st.markdown(f"**{it['nombre']}**")
-                    if it.get("cas"):
-                        st.caption(f"CAS {it['cas']}")
-                    mostrar_pictogramas(it.get("riesgos"))
-                    st.write(f"{stock} {it['unidad']} · {estado(stock, it['stock_minimo'])}")
-                    if st.button("Seleccionar", key=f"sel_chk_{it['id']}", use_container_width=True):
-                        st.session_state.item_chequeo_id = it["id"]
-                        st.rerun()
+                if tarjeta_item(it, key_prefix="sel_chk"):
+                    st.session_state.item_chequeo_id = it["id"]
+                    st.rerun()
         return
 
     if st.button("← Elegir otro solvente"):
