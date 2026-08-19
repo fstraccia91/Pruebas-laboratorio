@@ -32,11 +32,12 @@ from datos import (
     eliminar_lote, contar_lotes_item, eliminar_item, update_item, update_lote, registrar_chequeo, get_lote_inicial,
     daily_consumption, stock_series, add_item, add_lote, get_envases, add_movimiento,
     get_personas, add_persona, toggle_persona, delete_persona, get_catalogo, add_catalogo_entry,
+    get_favoritos_ids, toggle_favorito, conteo_usos_recientes,
 )
 from logica import (
     NOMBRE_LABORATORIO, SUBTITULO_LABORATORIO, NOMBRE_SOFTWARE, VERSION_SOFTWARE,
     UNIDADES, VENTANAS, TIPOS_CARGA, RIESGOS_GHS, convertir_unidad, dias_para_vencer,
-    etiqueta_vencimiento, estado, _color_estado,
+    etiqueta_vencimiento, estado, _color_estado, etiqueta_identificador,
 )
 
 
@@ -133,6 +134,19 @@ st.markdown("""
         padding: 2px 12px;
         font-size: 0.8rem;
         font-weight: 500;
+    }
+
+    /* La estrellita de favorito: chica, sin fondo, solo el ícono — el
+       "_fav_" está en la key de todos los botones de favorito de todos los
+       ítems, así que esta única regla los alcanza a todos */
+    div[class*="_fav_"] button {
+        min-height: unset;
+        width: auto;
+        padding: 2px 8px;
+        font-size: 1.1rem;
+        border: none;
+        background: transparent;
+        box-shadow: none;
     }
 
     /* Inputs numéricos y de texto un poco más altos, mismo motivo */
@@ -320,14 +334,16 @@ def fila_titulo_pictogramas(titulo_html, riesgos_str, tamano_picto=24):
     )
 
 
-def tarjeta_item(item, key_prefix):
-    """Tarjeta de ítem para Usar/Chequear: nombre + CAS a la izquierda, stock +
-    estado debajo, pictogramas siempre a la derecha. Devuelve True si se tocó
-    'Seleccionar'."""
+def tarjeta_item(item, key_prefix, favorito=False):
+    """Tarjeta de ítem para Usar/Chequear: nombre + CAS/N° de parte a la
+    izquierda, stock + estado debajo, pictogramas siempre a la derecha, y un
+    botón de favorito (marcar/desmarcar).
+    Devuelve (se_tocó_seleccionar, se_tocó_favorito)."""
     stock = item_stock(item["id"])
     nombre_html = f"<span style='font-weight:600; font-size:0.95rem;'>{item['nombre']}</span>"
     if item.get("cas"):
-        nombre_html += f" <span style='color:#5C6B67; font-weight:400; font-size:0.95rem;'>· CAS {item['cas']}</span>"
+        etiqueta_id = etiqueta_identificador(item.get("familia_id"))
+        nombre_html += f" <span style='color:#5C6B67; font-weight:400; font-size:0.95rem;'>· {etiqueta_id} {item['cas']}</span>"
 
     with st.container(border=True):
         fila_titulo_pictogramas(nombre_html, item.get("riesgos"))
@@ -336,7 +352,27 @@ def tarjeta_item(item, key_prefix):
             f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}</div>",
             unsafe_allow_html=True,
         )
-        return st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True)
+        click_favorito = st.button(
+            "⭐" if favorito else "☆",
+            key=f"{key_prefix}_fav_{item['id']}",
+            help="Quitar de favoritos" if favorito else "Marcar como favorito",
+        )
+        click_seleccionar = st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True, type="primary")
+        return click_seleccionar, click_favorito
+
+
+def ordenar_por_prioridad(items, familia_id):
+    """Favoritos de la persona actual primero, y dentro de cada grupo, los
+    más usados en los últimos 90 días primero. Devuelve (items_ordenados,
+    ids_favoritos) — este último para saber qué estrella mostrar en cada tarjeta."""
+    persona = st.session_state.analista_actual
+    favoritos_ids = get_favoritos_ids(persona, familia_id) if persona else set()
+    uso = conteo_usos_recientes(familia_id)
+    items_ordenados = sorted(
+        items,
+        key=lambda it: (0 if it["id"] in favoritos_ids else 1, -uso.get(it["id"], 0), it["nombre"]),
+    )
+    return items_ordenados, favoritos_ids
 
 
 def panel_diagnostico():
@@ -468,6 +504,8 @@ if "item_gestion_id" not in st.session_state:
 
 if "stock_modo_gestion" not in st.session_state:
     st.session_state.stock_modo_gestion = None
+if "confirmacion_stock" not in st.session_state:
+    st.session_state.confirmacion_stock = None
 
 
 def render_home():
@@ -650,12 +688,18 @@ def render_usar(familia_id):
         st.session_state.item_id = None
         st.caption("Tocá el solvente que necesitás usar.")
         items = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0]
+        items = filtrar_por_categoria(items, key_prefix="usar")
+        items, favoritos_ids = ordenar_por_prioridad(items, familia_id)
         if not items:
             st.info("No hay ítems con stock disponible. Si algo se agotó, reponelo desde la pestaña Stock.")
         cols = st.columns(3)
         for i, it in enumerate(items):
             with cols[i % 3]:
-                if tarjeta_item(it, key_prefix="sel_usar"):
+                click_sel, click_fav = tarjeta_item(it, key_prefix="sel_usar", favorito=it["id"] in favoritos_ids)
+                if click_fav:
+                    toggle_favorito(st.session_state.analista_actual, it["id"])
+                    st.rerun()
+                if click_sel:
                     st.session_state.item_id = it["id"]
                     st.session_state.usar_lote_sel = None
                     st.rerun()
@@ -735,10 +779,16 @@ def render_chequear(familia_id):
         st.session_state.item_chequeo_id = None
         st.caption("Tocá el solvente que querés chequear.")
         items = get_items(familia_id)
+        items = filtrar_por_categoria(items, key_prefix="chk")
+        items, favoritos_ids = ordenar_por_prioridad(items, familia_id)
         cols = st.columns(3)
         for i, it in enumerate(items):
             with cols[i % 3]:
-                if tarjeta_item(it, key_prefix="sel_chk"):
+                click_sel, click_fav = tarjeta_item(it, key_prefix="sel_chk", favorito=it["id"] in favoritos_ids)
+                if click_fav:
+                    toggle_favorito(st.session_state.analista_actual, it["id"])
+                    st.rerun()
+                if click_sel:
                     st.session_state.item_chequeo_id = it["id"]
                     st.session_state.chk_lote_sel = None
                     st.rerun()
@@ -812,7 +862,25 @@ def render_chequear(familia_id):
             st.rerun()
 
 
+def filtrar_por_categoria(items, key_prefix):
+    """Si los ítems tienen más de una categoría distinta, muestra un filtro
+    para elegir cuál ver (útil cuando hay muchos ítems, como en Consumibles).
+    Si todos comparten la misma categoría (o no tienen), no muestra nada."""
+    categorias = sorted({i["categoria"] for i in items if i.get("categoria")})
+    if len(categorias) < 2:
+        return items
+    opciones = ["Todas"] + categorias
+    elegida = st.selectbox("Categoría", opciones, key=f"{key_prefix}_filtro_categoria")
+    if elegida == "Todas":
+        return items
+    return [i for i in items if i.get("categoria") == elegida]
+
+
 def render_stock(familia_id):
+    if st.session_state.get("confirmacion_stock"):
+        st.success(st.session_state.confirmacion_stock)
+        st.session_state.confirmacion_stock = None
+
     item_gestion_id = st.session_state.get("item_gestion_id")
     if item_gestion_id:
         item = next((i for i in get_items(familia_id) if i["id"] == item_gestion_id), None)
@@ -837,12 +905,20 @@ def render_stock(familia_id):
                                 file_name=f"stock_{familia_id}.csv", mime="text/csv")
 
     with st.expander("➕ Nuevo ítem"):
+        etiqueta_id = etiqueta_identificador(familia_id)
         catalogo = get_catalogo(familia_id)
-        opciones_cat = ["— Escribir manualmente —"] + [
-            f"{c['nombre']} (CAS {c['cas']})" if c.get("cas") else c["nombre"] for c in catalogo
-        ]
+
+        def _etiqueta_catalogo(c):
+            partes = [c["nombre"]]
+            if c.get("marca"):
+                partes.append(f"— {c['marca']}")
+            if c.get("cas"):
+                partes.append(f"({etiqueta_id} {c['cas']})")
+            return " ".join(partes)
+
+        opciones_cat = ["— Escribir manualmente —"] + [_etiqueta_catalogo(c) for c in catalogo]
         elegido_cat = st.selectbox(
-            "¿Es alguno de estos? (autocompleta nombre, CAS y riesgos)",
+            f"¿Es alguno de estos? (autocompleta nombre, {etiqueta_id.lower()}, categoría y riesgos)",
             opciones_cat, key="new_item_catalogo_sel",
         )
         prellenado = None
@@ -858,9 +934,22 @@ def render_stock(familia_id):
         unidad = c2.selectbox("Unidad", UNIDADES, key=f"new_item_unidad_{sufijo_key}")
         minimo = c3.number_input("Stock mínimo", min_value=0.0, step=1.0, key=f"new_item_min_{sufijo_key}")
         cas = c4.text_input(
-            "N° CAS (opcional)", value=(prellenado.get("cas") or "") if prellenado else "",
+            f"{etiqueta_id} (opcional)", value=(prellenado.get("cas") or "") if prellenado else "",
             key=f"new_item_cas_{sufijo_key}",
         )
+
+        categorias_existentes = sorted({
+            c["categoria"] for c in catalogo if c.get("categoria")
+        } | {i["categoria"] for i in get_items(familia_id) if i.get("categoria")})
+        opciones_categoria = ["(sin categoría)"] + categorias_existentes + ["+ Nueva categoría"]
+        categoria_default = prellenado.get("categoria") if prellenado and prellenado.get("categoria") else "(sin categoría)"
+        idx_categoria = opciones_categoria.index(categoria_default) if categoria_default in opciones_categoria else 0
+        categoria_sel = st.selectbox("Categoría (opcional, para agrupar y filtrar)", opciones_categoria, index=idx_categoria, key=f"new_item_categoria_sel_{sufijo_key}")
+        categoria_final = None
+        if categoria_sel == "+ Nueva categoría":
+            categoria_final = st.text_input("Nombre de la nueva categoría", key=f"new_item_categoria_nueva_{sufijo_key}").strip() or None
+        elif categoria_sel != "(sin categoría)":
+            categoria_final = categoria_sel
 
         riesgos_previos = (prellenado.get("riesgos") or "").split(",") if prellenado and prellenado.get("riesgos") else []
         riesgos_sel = st.multiselect(
@@ -882,30 +971,40 @@ def render_stock(familia_id):
             if nombre.strip():
                 add_item(
                     familia_id, nombre.strip(), unidad, minimo, st.session_state.analista_actual,
-                    cas=cas.strip() or None, riesgos=riesgos_sel or None,
+                    cas=cas.strip() or None, riesgos=riesgos_sel or None, categoria=categoria_final,
                 )
-                if guardar_en_catalogo and (cas.strip() or riesgos_sel):
+                if guardar_en_catalogo and (cas.strip() or riesgos_sel or categoria_final):
                     add_catalogo_entry(
                         familia_id, nombre.strip(), cas=cas.strip() or None, riesgos=riesgos_sel or None,
-                        fuente=f"Cargado por {st.session_state.analista_actual}",
+                        categoria=categoria_final, fuente=f"Cargado por {st.session_state.analista_actual}",
                     )
-                st.success(f"'{nombre}' creado. Ahora agregale un lote.")
+                for k in [
+                    "new_item_catalogo_sel", f"new_item_nombre_{sufijo_key}", f"new_item_unidad_{sufijo_key}",
+                    f"new_item_min_{sufijo_key}", f"new_item_cas_{sufijo_key}", f"new_item_riesgos_{sufijo_key}",
+                    f"new_item_guardarcat_{sufijo_key}", f"new_item_categoria_sel_{sufijo_key}",
+                    f"new_item_categoria_nueva_{sufijo_key}",
+                ]:
+                    st.session_state.pop(k, None)
+                st.session_state.confirmacion_stock = f"✅ '{nombre}' creado. Ahora agregale un lote."
                 st.rerun()
             else:
                 st.error("Ingresá un nombre.")
         st.caption("Cargá cada grado o marca (HPLC, PA, ACS...) como un ítem distinto: se controlan por separado.")
 
-    mostrar_agotados = st.checkbox("Mostrar también los ítems agotados (stock = 0)")
+    mostrar_agotados = st.checkbox("Mostrar también los ítems agotados (stock = 0)", value=True)
 
     items_actuales = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0 or mostrar_agotados]
+    items_actuales = filtrar_por_categoria(items_actuales, key_prefix="stock")
+    items_actuales, favoritos_ids_stock = ordenar_por_prioridad(items_actuales, familia_id)
     if items_actuales:
         resumen = pd.DataFrame([{
+            "⭐": "⭐" if i["id"] in favoritos_ids_stock else "",
             "Ítem": i["nombre"],
             "Stock": f"{item_stock(i['id'])} {i['unidad']}",
             "Mínimo": f"{i['stock_minimo']} {i['unidad']}",
             "Estado": estado(item_stock(i["id"]), i["stock_minimo"]),
         } for i in items_actuales])
-        st.caption("Tocá una fila para gestionar ese ítem (agregar lote, cargar stock, o eliminar).")
+        st.caption("Tocá una fila para gestionar ese ítem (agregar lote, cargar stock, o eliminar). Ordenado por favoritos y uso reciente.")
         evento = st.dataframe(
             resumen.style.map(_color_estado, subset=["Estado"]),
             hide_index=True, use_container_width=True,
@@ -921,16 +1020,23 @@ def render_stock(familia_id):
 
 
 def render_gestion_item(item):
+    if st.session_state.get("confirmacion_stock"):
+        st.success(st.session_state.confirmacion_stock)
+        st.session_state.confirmacion_stock = None
+
     if st.button("← Volver a Stock"):
         st.session_state.item_gestion_id = None
         st.session_state.stock_modo_gestion = None
         st.rerun()
 
     stock = item_stock(item["id"])
+    etiqueta_id = etiqueta_identificador(item.get("familia_id"))
 
     titulo_html = f"<span style='font-weight:700; font-size:1.15rem; font-family:\"Space Grotesk\",sans-serif;'>{item['nombre']}</span>"
     if item.get("cas"):
-        titulo_html += f"<br><span style='color:#5C6B67; font-weight:400; font-size:0.8rem;'>CAS {item['cas']}</span>"
+        titulo_html += f"<br><span style='color:#5C6B67; font-weight:400; font-size:0.8rem;'>{etiqueta_id} {item['cas']}</span>"
+    if item.get("categoria"):
+        titulo_html += f"<br><span style='color:#5C6B67; font-weight:400; font-size:0.8rem;'>📂 {item['categoria']}</span>"
     fila_titulo_pictogramas(titulo_html, item.get("riesgos"), tamano_picto=30)
 
     izquierda_html = (
@@ -981,6 +1087,7 @@ def render_gestion_item(item):
 
     if modo == "editar":
         st.markdown("**✏️ Editar ítem**")
+        etiqueta_id = etiqueta_identificador(item.get("familia_id"))
         e1, e2, e3, e4 = st.columns([2, 1, 1, 1])
         nuevo_nombre = e1.text_input("Nombre", value=item["nombre"], key=f"edit_nombre_{item['id']}")
         nueva_unidad = e2.selectbox(
@@ -992,7 +1099,12 @@ def render_gestion_item(item):
             "Stock mínimo", min_value=0.0, step=1.0, value=float(item["stock_minimo"]),
             key=f"edit_minimo_{item['id']}",
         )
-        nuevo_cas = e4.text_input("N° CAS", value=item.get("cas") or "", key=f"edit_cas_{item['id']}")
+        nuevo_cas = e4.text_input(etiqueta_id, value=item.get("cas") or "", key=f"edit_cas_{item['id']}")
+
+        nueva_categoria = st.text_input(
+            "Categoría (opcional, para agrupar y filtrar)", value=item.get("categoria") or "",
+            key=f"edit_categoria_{item['id']}",
+        )
 
         riesgos_actuales = (item.get("riesgos") or "").split(",") if item.get("riesgos") else []
         nuevos_riesgos = st.multiselect(
@@ -1010,10 +1122,10 @@ def render_gestion_item(item):
                 update_item(
                     item["id"],
                     nombre=nuevo_nombre.strip(), unidad=nueva_unidad, stock_minimo=nuevo_minimo,
-                    cas=nuevo_cas.strip() or None, riesgos=nuevos_riesgos,
+                    cas=nuevo_cas.strip() or None, riesgos=nuevos_riesgos, categoria=nueva_categoria.strip() or None,
                 )
-                st.success("Ítem actualizado.")
                 st.session_state.stock_modo_gestion = None
+                st.session_state.confirmacion_stock = f"✅ '{nuevo_nombre.strip()}' actualizado."
                 st.rerun()
 
     elif modo == "editar_lote" and lotes:
@@ -1065,8 +1177,8 @@ def render_gestion_item(item):
                     sds_url=nuevo_sds.strip() or None,
                     fecha_vencimiento=nueva_fecha_venc,
                 )
-                st.success("Lote actualizado.")
                 st.session_state.stock_modo_gestion = None
+                st.session_state.confirmacion_stock = f"✅ Lote de {nueva_marca.strip()} actualizado."
                 st.rerun()
 
     elif modo == "agregar":
@@ -1130,7 +1242,15 @@ def render_gestion_item(item):
                     fecha_vencimiento=fecha_venc, ubicacion=ubicacion.strip() or None,
                     codigo_catalogo=codigo_catalogo.strip() or None, sds_url=sds_url.strip() or None,
                 )
+                for k in [
+                    f"marca_{item['id']}", f"lote_{item['id']}", f"envase_{item['id']}",
+                    f"cantenv_{item['id']}", f"contenido_{item['id']}", f"unidcont_{item['id']}",
+                    f"tipocarga_{item['id']}", f"tienevenc_{item['id']}", f"fechavenc_{item['id']}",
+                    f"ubicacion_{item['id']}", f"catalogo_{item['id']}", f"sds_{item['id']}",
+                ]:
+                    st.session_state.pop(k, None)
                 st.session_state.stock_modo_gestion = None
+                st.session_state.confirmacion_stock = f"✅ Lote de {marca.strip()} agregado — {total_calculado} {item['unidad']}."
                 st.rerun()
 
     elif modo == "cargar" and lotes:
@@ -1147,8 +1267,10 @@ def render_gestion_item(item):
                 st.error("Ingresá una cantidad válida.")
             else:
                 add_movimiento(item["id"], lc["id"], "in", cant_carga, st.session_state.analista_actual, nota_carga, categoria=tipo_carga_exist)
-                st.success(f"Cargaste {cant_carga} {item['unidad']} a ese lote.")
+                for k in [f"cantcarga_{item['id']}", f"tipocargaexist_{item['id']}", f"notacarga_{item['id']}"]:
+                    st.session_state.pop(k, None)
                 st.session_state.stock_modo_gestion = None
+                st.session_state.confirmacion_stock = f"✅ Cargaste {cant_carga} {item['unidad']} a ese lote."
                 st.rerun()
 
     elif modo == "eliminar" and lotes:
