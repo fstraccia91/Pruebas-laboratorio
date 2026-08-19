@@ -18,6 +18,7 @@ Cómo correrla localmente:
     streamlit run app.py
 """
 
+import base64
 import os
 from datetime import datetime, timedelta
 
@@ -37,27 +38,6 @@ from logica import (
     UNIDADES, VENTANAS, TIPOS_CARGA, RIESGOS_GHS, convertir_unidad, dias_para_vencer,
     etiqueta_vencimiento, estado, _color_estado,
 )
-
-
-import os
-
-
-import uuid
-
-
-from datetime import datetime, timedelta
-
-
-import pandas as pd
-
-
-import plotly.express as px
-
-
-import streamlit as st
-
-
-from supabase import create_client
 
 
 def elegir_lote(lotes, item, key_prefix):
@@ -150,6 +130,11 @@ if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
 
+def _img_b64(path):
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+
 def mostrar_pictogramas(riesgos_str, tamaño=26):
     """Muestra los pictogramas GHS del ítem en fila (si subiste las imágenes a
     assets/ghs/). Si falta algún archivo, simplemente lo salta sin romper."""
@@ -158,13 +143,6 @@ def mostrar_pictogramas(riesgos_str, tamaño=26):
         cols = st.columns(len(rutas))
         for col, ruta in zip(cols, rutas):
             col.image(ruta, width=tamaño)
-
-
-def mostrar_pictogramas_apilados(riesgos_str, tamaño=22):
-    """Igual que mostrar_pictogramas, pero uno debajo del otro — pensado para
-    columnas angostas (al costado de una tarjeta), en vez de en fila."""
-    for ruta in _rutas_pictogramas(riesgos_str):
-        st.image(ruta, width=tamaño)
 
 
 def _rutas_pictogramas(riesgos_str):
@@ -179,20 +157,34 @@ def _rutas_pictogramas(riesgos_str):
 
 
 def tarjeta_item(item, key_prefix):
-    """Tarjeta de ítem para Usar/Chequear: nombre + CAS en una línea, stock +
-    estado debajo, pictogramas a la derecha, botón Seleccionar abajo de todo.
+    """Tarjeta de ítem para Usar/Chequear: nombre + CAS a la izquierda, stock +
+    estado debajo, pictogramas SIEMPRE a la derecha (con HTML/CSS, no con
+    columnas de Streamlit — las columnas se apilan solas en el celular, esto no).
     Devuelve True si se tocó 'Seleccionar'."""
     stock = item_stock(item["id"])
+    rutas = _rutas_pictogramas(item.get("riesgos"))
+    pictos_html = "".join(
+        f"<img src='data:image/png;base64,{_img_b64(r)}' "
+        f"style='width:24px; height:24px; margin-left:4px;' />"
+        for r in rutas
+    )
+    nombre_html = item["nombre"]
+    if item.get("cas"):
+        nombre_html += f" <span style='color:#5C6B67; font-weight:400;'>· CAS {item['cas']}</span>"
+
     with st.container(border=True):
-        col_info, col_pict = st.columns([3, 1])
-        with col_info:
-            linea_nombre = f"**{item['nombre']}**"
-            if item.get("cas"):
-                linea_nombre += f" · CAS {item['cas']}"
-            st.markdown(linea_nombre)
-            st.write(f"{stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}")
-        with col_pict:
-            mostrar_pictogramas_apilados(item.get("riesgos"))
+        st.markdown(
+            f"""
+            <div style='display:flex; justify-content:space-between; align-items:flex-start; gap:6px;'>
+                <div style='font-weight:600; font-size:0.95rem;'>{nombre_html}</div>
+                <div style='display:flex; flex-shrink:0;'>{pictos_html}</div>
+            </div>
+            <div style='color:#5C6B67; font-size:0.85rem; margin-top:4px;'>
+                {stock} {item['unidad']} · {estado(stock, item['stock_minimo'])}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         return st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True)
 
 
@@ -341,15 +333,7 @@ def render_home():
         if st.button("Cambiar", use_container_width=True):
             st.session_state.analista_actual = None
             st.rerun()
-    if os.path.exists("assets/logo_inti.png"):
-        st.image("assets/logo_inti.png", width=70)
-    st.markdown(
-        f"<div style='display:inline-block; background:#DCEAE7; color:#14504A; "
-        f"font-size:0.75rem; font-weight:600; padding:3px 10px; border-radius:999px; margin-bottom:8px;'>"
-        f"{NOMBRE_SOFTWARE} · {VERSION_SOFTWARE}</div>",
-        unsafe_allow_html=True,
-    )
-    st.title(f"🧪 {NOMBRE_LABORATORIO}")
+    encabezado_marca(f"{NOMBRE_SOFTWARE} · {VERSION_SOFTWARE}", NOMBRE_LABORATORIO, "🧪")
     st.caption(f"{SUBTITULO_LABORATORIO} · Panel de Insumos")
     st.caption("Elegí qué stock querés ver. Cada familia se controla por separado.")
 
@@ -390,6 +374,31 @@ def render_home():
     st.caption(f"🔌 Base de datos conectada: {url_conectada}")
 
 
+def encabezado_marca(linea_chica, titulo, icono=""):
+    """Logo + texto chico en una fila (con HTML/CSS, para que quede al lado
+    siempre, incluso en el celular), y el título apenas más grande debajo."""
+    logo_html = ""
+    if os.path.exists("assets/logo_inti.png"):
+        _logo_b64 = _img_b64("assets/logo_inti.png")
+        logo_html = (
+            f"<img src='data:image/png;base64,{_logo_b64}' "
+            f"style='width:34px; height:34px; margin-right:8px; border-radius:6px;' />"
+        )
+    st.markdown(
+        f"""
+        <div style='display:flex; align-items:center; margin-bottom:6px;'>
+            {logo_html}
+            <span style='font-size:0.9rem; color:#5C6B67; font-weight:500;'>{linea_chica}</span>
+        </div>
+        <div style='font-size:1.55rem; font-weight:700; color:#14504A;
+                     font-family:"Space Grotesk","IBM Plex Sans",sans-serif; margin-bottom:14px;'>
+            {icono} {titulo}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_familia(familia_id):
     fam = next(f for f in get_familias() if f["id"] == familia_id)
     seccion = st.session_state.seccion_activa
@@ -421,10 +430,7 @@ def render_familia(familia_id):
             st.session_state.stock_modo_gestion = None
             st.rerun()
     with top2:
-        if os.path.exists("assets/logo_inti.png"):
-            st.image("assets/logo_inti.png", width=64)
-        st.caption(f"{NOMBRE_SOFTWARE} · LCyEE")
-        st.title(f"{fam['icono']} {fam['nombre']}")
+        encabezado_marca(f"{NOMBRE_SOFTWARE} · LCyEE", fam["nombre"], fam["icono"])
 
     secciones_principales = [
         ("usar", "📲", "Usar"),
