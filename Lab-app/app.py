@@ -227,11 +227,12 @@ def linea_marca(texto, centrado=False, tamano="0.95rem", tamano_logo=34):
 
 
 def titulo_seccion(titulo, icono=""):
-    """Título grande (apenas más grande que linea_marca, no un st.title enorme)."""
+    """Título de la familia — misma tipografía que linea_marca (IBM Plex Sans),
+    apenas más grande, no un título gigante."""
     st.markdown(
         f"""
-        <div style='font-size:1.55rem; font-weight:700; color:#14504A; word-break:break-word;
-                     font-family:"Space Grotesk","IBM Plex Sans",sans-serif; margin-bottom:14px;'>
+        <div style='font-size:1.2rem; font-weight:700; color:#14504A; word-break:break-word;
+                     font-family:"IBM Plex Sans",sans-serif; margin-bottom:14px;'>
             {icono} {titulo}
         </div>
         """,
