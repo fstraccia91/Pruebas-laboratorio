@@ -468,6 +468,8 @@ if "item_gestion_id" not in st.session_state:
 
 if "stock_modo_gestion" not in st.session_state:
     st.session_state.stock_modo_gestion = None
+if "confirmacion_stock" not in st.session_state:
+    st.session_state.confirmacion_stock = None
 
 
 def render_home():
@@ -813,6 +815,10 @@ def render_chequear(familia_id):
 
 
 def render_stock(familia_id):
+    if st.session_state.get("confirmacion_stock"):
+        st.success(st.session_state.confirmacion_stock)
+        st.session_state.confirmacion_stock = None
+
     item_gestion_id = st.session_state.get("item_gestion_id")
     if item_gestion_id:
         item = next((i for i in get_items(familia_id) if i["id"] == item_gestion_id), None)
@@ -889,13 +895,19 @@ def render_stock(familia_id):
                         familia_id, nombre.strip(), cas=cas.strip() or None, riesgos=riesgos_sel or None,
                         fuente=f"Cargado por {st.session_state.analista_actual}",
                     )
-                st.success(f"'{nombre}' creado. Ahora agregale un lote.")
+                for k in [
+                    "new_item_catalogo_sel", f"new_item_nombre_{sufijo_key}", f"new_item_unidad_{sufijo_key}",
+                    f"new_item_min_{sufijo_key}", f"new_item_cas_{sufijo_key}", f"new_item_riesgos_{sufijo_key}",
+                    f"new_item_guardarcat_{sufijo_key}",
+                ]:
+                    st.session_state.pop(k, None)
+                st.session_state.confirmacion_stock = f"✅ '{nombre}' creado. Ahora agregale un lote."
                 st.rerun()
             else:
                 st.error("Ingresá un nombre.")
         st.caption("Cargá cada grado o marca (HPLC, PA, ACS...) como un ítem distinto: se controlan por separado.")
 
-    mostrar_agotados = st.checkbox("Mostrar también los ítems agotados (stock = 0)")
+    mostrar_agotados = st.checkbox("Mostrar también los ítems agotados (stock = 0)", value=True)
 
     items_actuales = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0 or mostrar_agotados]
     if items_actuales:
@@ -921,6 +933,10 @@ def render_stock(familia_id):
 
 
 def render_gestion_item(item):
+    if st.session_state.get("confirmacion_stock"):
+        st.success(st.session_state.confirmacion_stock)
+        st.session_state.confirmacion_stock = None
+
     if st.button("← Volver a Stock"):
         st.session_state.item_gestion_id = None
         st.session_state.stock_modo_gestion = None
@@ -1012,8 +1028,8 @@ def render_gestion_item(item):
                     nombre=nuevo_nombre.strip(), unidad=nueva_unidad, stock_minimo=nuevo_minimo,
                     cas=nuevo_cas.strip() or None, riesgos=nuevos_riesgos,
                 )
-                st.success("Ítem actualizado.")
                 st.session_state.stock_modo_gestion = None
+                st.session_state.confirmacion_stock = f"✅ '{nuevo_nombre.strip()}' actualizado."
                 st.rerun()
 
     elif modo == "editar_lote" and lotes:
@@ -1065,8 +1081,8 @@ def render_gestion_item(item):
                     sds_url=nuevo_sds.strip() or None,
                     fecha_vencimiento=nueva_fecha_venc,
                 )
-                st.success("Lote actualizado.")
                 st.session_state.stock_modo_gestion = None
+                st.session_state.confirmacion_stock = f"✅ Lote de {nueva_marca.strip()} actualizado."
                 st.rerun()
 
     elif modo == "agregar":
@@ -1130,7 +1146,15 @@ def render_gestion_item(item):
                     fecha_vencimiento=fecha_venc, ubicacion=ubicacion.strip() or None,
                     codigo_catalogo=codigo_catalogo.strip() or None, sds_url=sds_url.strip() or None,
                 )
+                for k in [
+                    f"marca_{item['id']}", f"lote_{item['id']}", f"envase_{item['id']}",
+                    f"cantenv_{item['id']}", f"contenido_{item['id']}", f"unidcont_{item['id']}",
+                    f"tipocarga_{item['id']}", f"tienevenc_{item['id']}", f"fechavenc_{item['id']}",
+                    f"ubicacion_{item['id']}", f"catalogo_{item['id']}", f"sds_{item['id']}",
+                ]:
+                    st.session_state.pop(k, None)
                 st.session_state.stock_modo_gestion = None
+                st.session_state.confirmacion_stock = f"✅ Lote de {marca.strip()} agregado — {total_calculado} {item['unidad']}."
                 st.rerun()
 
     elif modo == "cargar" and lotes:
@@ -1147,8 +1171,10 @@ def render_gestion_item(item):
                 st.error("Ingresá una cantidad válida.")
             else:
                 add_movimiento(item["id"], lc["id"], "in", cant_carga, st.session_state.analista_actual, nota_carga, categoria=tipo_carga_exist)
-                st.success(f"Cargaste {cant_carga} {item['unidad']} a ese lote.")
+                for k in [f"cantcarga_{item['id']}", f"tipocargaexist_{item['id']}", f"notacarga_{item['id']}"]:
+                    st.session_state.pop(k, None)
                 st.session_state.stock_modo_gestion = None
+                st.session_state.confirmacion_stock = f"✅ Cargaste {cant_carga} {item['unidad']} a ese lote."
                 st.rerun()
 
     elif modo == "eliminar" and lotes:
