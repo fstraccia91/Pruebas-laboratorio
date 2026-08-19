@@ -136,6 +136,19 @@ st.markdown("""
         font-weight: 500;
     }
 
+    /* La estrellita de favorito: chica, sin fondo, solo el ícono — el
+       "_fav_" está en la key de todos los botones de favorito de todos los
+       ítems, así que esta única regla los alcanza a todos */
+    div[class*="_fav_"] button {
+        min-height: unset;
+        width: auto;
+        padding: 2px 8px;
+        font-size: 1.1rem;
+        border: none;
+        background: transparent;
+        box-shadow: none;
+    }
+
     /* Inputs numéricos y de texto un poco más altos, mismo motivo */
     .stTextInput input, .stNumberInput input, .stSelectbox [data-baseweb="select"] {
         min-height: 2.6rem;
@@ -340,8 +353,9 @@ def tarjeta_item(item, key_prefix, favorito=False):
             unsafe_allow_html=True,
         )
         click_favorito = st.button(
-            "⭐ Quitar de favoritos" if favorito else "☆ Marcar como favorito",
-            key=f"{key_prefix}_fav_{item['id']}", use_container_width=True,
+            "⭐" if favorito else "☆",
+            key=f"{key_prefix}_fav_{item['id']}",
+            help="Quitar de favoritos" if favorito else "Marcar como favorito",
         )
         click_seleccionar = st.button("Seleccionar", key=f"{key_prefix}_{item['id']}", use_container_width=True, type="primary")
         return click_seleccionar, click_favorito
