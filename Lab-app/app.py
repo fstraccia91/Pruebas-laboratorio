@@ -29,7 +29,7 @@ import streamlit as st
 from datos import (
     ConfiguracionFaltante, init_db, get_familias, get_items, get_lotes, get_movimientos,
     item_stock, lote_stock, ultimo_chequeo, anular_movimiento, contar_movimientos_lote,
-    eliminar_lote, contar_lotes_item, eliminar_item, update_item, registrar_chequeo, get_lote_inicial,
+    eliminar_lote, contar_lotes_item, eliminar_item, update_item, update_lote, registrar_chequeo, get_lote_inicial,
     daily_consumption, stock_series, add_item, add_lote, get_envases, add_movimiento,
     get_personas, add_persona, toggle_persona, delete_persona,
 )
@@ -40,32 +40,45 @@ from logica import (
 )
 
 
-def elegir_lote(lotes, item, key_prefix):
-    """Muestra los lotes como tarjetas (marca, lote, envase, stock, vencimiento) en
-    vez de un desplegable de una sola línea. Devuelve el lote elegido."""
+def elegir_lote(lotes, item, key_prefix, requiere_confirmar=False):
+    """Muestra los lotes como tarjetas (marca, lote, envase, stock, ubicación,
+    vencimiento) en vez de un desplegable de una sola línea.
+
+    Si requiere_confirmar=False (comportamiento de siempre): preselecciona el
+    primer lote y siempre devuelve uno.
+
+    Si requiere_confirmar=True: no preselecciona nada — hay que tocar 'Elegir'
+    primero. Devuelve None hasta que se confirme un lote, y después muestra
+    un botón '← Elegir otro lote' para volver a la selección."""
     sel_key = f"{key_prefix}_lote_sel"
-    ids_disponibles = [l["id"] for l in lotes]
-    if st.session_state.get(sel_key) not in ids_disponibles:
-        st.session_state[sel_key] = ids_disponibles[0]
+
+    if requiere_confirmar:
+        confirmado_id = st.session_state.get(sel_key)
+        if confirmado_id in [l["id"] for l in lotes]:
+            if st.button("← Elegir otro lote", key=f"{key_prefix}_volver_lote"):
+                st.session_state[sel_key] = None
+                st.rerun()
+            return next(l for l in lotes if l["id"] == confirmado_id)
+    else:
+        ids_disponibles = [l["id"] for l in lotes]
+        if st.session_state.get(sel_key) not in ids_disponibles:
+            st.session_state[sel_key] = ids_disponibles[0]
 
     cols = st.columns(min(len(lotes), 3))
     for idx, l in enumerate(lotes):
         stock_l = lote_stock(l["id"], l["stock_inicial"])
-        elegido = st.session_state[sel_key] == l["id"]
+        elegido = st.session_state.get(sel_key) == l["id"]
         titulo_html = (
             f"<span style='font-weight:600; font-size:0.95rem;'>{l['marca']}</span> "
             f"<span style='color:#5C6B67; font-weight:400; font-size:0.95rem;'>"
             f"· Lote {l['lote']} · {l['envase']}</span>"
         )
+        izquierda_html = f"<div style='color:#5C6B67; font-size:0.85rem;'>{stock_l} {item['unidad']}</div>"
+        derecha_html = f"<div style='color:#5C6B67; font-size:0.78rem;'>📍 {l['ubicacion']}</div>" if l.get("ubicacion") else ""
         with cols[idx % len(cols)]:
             with st.container(border=True):
                 fila_titulo_pictogramas(titulo_html, item.get("riesgos"), tamano_picto=20)
-                st.markdown(
-                    f"<div style='color:#5C6B67; font-size:0.85rem; margin-top:4px;'>{stock_l} {item['unidad']}</div>",
-                    unsafe_allow_html=True,
-                )
-                if l.get("ubicacion"):
-                    st.caption(f"📍 {l['ubicacion']}")
+                fila_dos_lados(izquierda_html, derecha_html)
                 venc = etiqueta_vencimiento(l["fecha_vencimiento"])
                 if venc != "—":
                     st.caption(venc)
@@ -79,6 +92,9 @@ def elegir_lote(lotes, item, key_prefix):
                 ):
                     st.session_state[sel_key] = l["id"]
                     st.rerun()
+
+    if requiere_confirmar:
+        return None
     return next(l for l in lotes if l["id"] == st.session_state[sel_key])
 
 
@@ -107,6 +123,15 @@ st.markdown("""
         min-height: 3rem;
         border-radius: 10px;
         font-weight: 600;
+    }
+
+    /* El botón de "Volver / Menú / Cambiar de persona" queda más chico y
+       discreto que el resto — es navegación secundaria, no la acción principal */
+    .st-key-btn_volver_menu button {
+        min-height: 2rem;
+        padding: 2px 12px;
+        font-size: 0.8rem;
+        font-weight: 500;
     }
 
     /* Inputs numéricos y de texto un poco más altos, mismo motivo */
@@ -151,14 +176,15 @@ def linea_marca(texto, centrado=False, tamano="0.95rem", tamano_logo=34):
         _logo_b64 = _img_b64("assets/logo_inti.png")
         logo_html = (
             f"<img src='data:image/png;base64,{_logo_b64}' "
-            f"style='width:{tamano_logo}px; height:{tamano_logo}px; margin-right:8px; border-radius:6px;' />"
+            f"style='width:{tamano_logo}px; height:{tamano_logo}px; margin-right:8px; "
+            f"border-radius:6px; flex-shrink:0;' />"
         )
     justificacion = "center" if centrado else "flex-start"
     st.markdown(
         f"""
-        <div style='display:flex; align-items:center; justify-content:{justificacion}; margin-bottom:6px;'>
+        <div style='display:flex; flex-wrap:wrap; align-items:center; justify-content:{justificacion}; margin-bottom:6px;'>
             {logo_html}
-            <span style='font-size:{tamano}; color:#5C6B67; font-weight:500;'>{texto}</span>
+            <span style='font-size:{tamano}; color:#5C6B67; font-weight:500; word-break:break-word;'>{texto}</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -169,9 +195,25 @@ def titulo_seccion(titulo, icono=""):
     """Título grande (apenas más grande que linea_marca, no un st.title enorme)."""
     st.markdown(
         f"""
-        <div style='font-size:1.55rem; font-weight:700; color:#14504A;
+        <div style='font-size:1.55rem; font-weight:700; color:#14504A; word-break:break-word;
                      font-family:"Space Grotesk","IBM Plex Sans",sans-serif; margin-bottom:14px;'>
             {icono} {titulo}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def fila_dos_lados(izquierda_html, derecha_html):
+    """Segunda fila de una tarjeta: contenido a la izquierda, contenido extra
+    (alineado a la derecha) — pensado para ir debajo de fila_titulo_pictogramas,
+    con el contenido de la derecha quedando debajo de los pictogramas."""
+    st.markdown(
+        f"""
+        <div style='display:flex; justify-content:space-between; align-items:flex-start;
+                     flex-wrap:wrap; gap:6px; margin-top:4px;'>
+            <div>{izquierda_html}</div>
+            <div style='text-align:right; flex-shrink:0;'>{derecha_html}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -380,7 +422,7 @@ if "stock_modo_gestion" not in st.session_state:
 
 def render_home():
     linea_marca(f"{NOMBRE_SOFTWARE} · {VERSION_SOFTWARE}", tamano="1rem", tamano_logo=38)
-    if st.button("👤 Cambiar de persona"):
+    if st.button("👤 Cambiar de persona", key="btn_volver_menu"):
         st.session_state.analista_actual = None
         st.rerun()
     titulo_seccion(NOMBRE_LABORATORIO, "🧪")
@@ -441,7 +483,7 @@ def render_familia(familia_id):
         label_volver = "👤 Cambiar de persona"
     else:
         label_volver = "← Volver"
-    if st.button(label_volver):
+    if st.button(label_volver, key="btn_volver_menu"):
         if subseccion:
             st.session_state.subseccion_activa = None
         elif seccion:
@@ -480,13 +522,30 @@ def render_familia(familia_id):
         "personas": lambda: render_personas(),
     }
 
+    ICONOS_ARCHIVO = {
+        "usar": "usar.png",
+        "chequear": "chequear.png",
+        "stock": "stock.png",
+        "gestion_labo": "gestion_laboratorio.png",
+    }
+
+    def _icono_seccion_html(sec_id, emoji_respaldo, tamano=44):
+        """Si subiste el archivo correspondiente a assets/iconos/, lo muestra;
+        si no, usa el emoji de respaldo — así nunca rompe aunque falte algo."""
+        nombre_archivo = ICONOS_ARCHIVO.get(sec_id, f"{sec_id}.png")
+        ruta = f"assets/iconos/{nombre_archivo}"
+        if os.path.exists(ruta):
+            b64 = _img_b64(ruta)
+            return f"<img src='data:image/png;base64,{b64}' style='width:{tamano}px; height:{tamano}px;' />"
+        return f"<span style='font-size:{tamano - 8}px;'>{emoji_respaldo}</span>"
+
     def _menu_cuadrados(items, prefijo):
         cols = st.columns(4)
         for idx, (sec_id, icon, label) in enumerate(items):
             with cols[idx % 4]:
                 with st.container(border=True):
                     st.markdown(
-                        f"<div style='text-align:center; font-size:34px; margin-bottom:4px;'>{icon}</div>",
+                        f"<div style='text-align:center; margin-bottom:4px;'>{_icono_seccion_html(sec_id, icon)}</div>",
                         unsafe_allow_html=True,
                     )
                     if st.button(label, key=f"{prefijo}_{sec_id}", use_container_width=True, type="primary"):
@@ -558,7 +617,10 @@ def render_usar(familia_id):
         st.warning("Ningún lote de este ítem tiene stock disponible.")
     else:
         st.caption("¿Qué lote usás?")
-        lote = elegir_lote(lotes, item, key_prefix="usar")
+        lote = elegir_lote(lotes, item, key_prefix="usar", requiere_confirmar=True)
+        if lote is None:
+            return
+
         analista = st.session_state.analista_actual
         st.caption(f"👤 Registrado a nombre de: **{analista}**")
 
@@ -636,7 +698,10 @@ def render_chequear(familia_id):
         st.warning("Este ítem todavía no tiene lotes cargados. Andá a la pestaña Stock para agregar el primero.")
     else:
         st.caption("¿Qué lote chequeás?")
-        lote = elegir_lote(lotes, item, key_prefix="chk")
+        lote = elegir_lote(lotes, item, key_prefix="chk", requiere_confirmar=True)
+        if lote is None:
+            return
+
         actual = lote_stock(lote["id"], lote["stock_inicial"])
 
         st.metric("El sistema dice", f"{actual} {item['unidad']}")
@@ -772,17 +837,18 @@ def render_gestion_item(item):
 
     stock = item_stock(item["id"])
 
-    titulo_html = f"<span style='font-weight:700; font-size:1.4rem; font-family:\"Space Grotesk\",sans-serif;'>{item['nombre']}</span>"
+    titulo_html = f"<span style='font-weight:700; font-size:1.15rem; font-family:\"Space Grotesk\",sans-serif;'>{item['nombre']}</span>"
     if item.get("cas"):
-        titulo_html += f" <span style='color:#5C6B67; font-weight:400; font-size:1rem;'>· CAS {item['cas']}</span>"
-    fila_titulo_pictogramas(titulo_html, item.get("riesgos"), tamano_picto=34)
+        titulo_html += f"<br><span style='color:#5C6B67; font-weight:400; font-size:0.8rem;'>CAS {item['cas']}</span>"
+    fila_titulo_pictogramas(titulo_html, item.get("riesgos"), tamano_picto=30)
 
-    st.markdown(
-        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:1.8rem; font-weight:600; "
-        f"color:#14504A; margin:2px 0 2px;'>{stock} {item['unidad']}</div>"
-        f"<div style='color:#5C6B67; font-size:0.9rem; margin-bottom:12px;'>{estado(stock, item['stock_minimo'])}</div>",
-        unsafe_allow_html=True,
+    izquierda_html = (
+        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:1.3rem; font-weight:600; "
+        f"color:#14504A;'>{stock} {item['unidad']}</div>"
     )
+    derecha_html = f"<div style='color:#5C6B67; font-size:0.85rem;'>{estado(stock, item['stock_minimo'])}</div>"
+    fila_dos_lados(izquierda_html, derecha_html)
+    st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
 
     lotes = get_lotes(item["id"])
     if lotes:
@@ -808,14 +874,16 @@ def render_gestion_item(item):
         st.caption("Sin lotes todavía.")
 
     st.divider()
-    b1, b2, b3, b4 = st.columns(4)
+    b1, b2, b3, b4, b5 = st.columns(5)
     if b1.button("➕ Agregar lote", use_container_width=True, type="primary"):
         st.session_state.stock_modo_gestion = "agregar"
     if b2.button("📥 Cargar a lote existente", use_container_width=True, disabled=not lotes):
         st.session_state.stock_modo_gestion = "cargar"
-    if b3.button("🗑️ Eliminar lote", use_container_width=True, disabled=not lotes):
+    if b3.button("✏️ Editar lote", use_container_width=True, disabled=not lotes):
+        st.session_state.stock_modo_gestion = "editar_lote"
+    if b4.button("🗑️ Eliminar lote", use_container_width=True, disabled=not lotes):
         st.session_state.stock_modo_gestion = "eliminar"
-    if b4.button("✏️ Editar ítem", use_container_width=True):
+    if b5.button("✏️ Editar ítem", use_container_width=True):
         st.session_state.stock_modo_gestion = "editar"
 
     modo = st.session_state.get("stock_modo_gestion")
@@ -854,6 +922,59 @@ def render_gestion_item(item):
                     cas=nuevo_cas.strip() or None, riesgos=nuevos_riesgos,
                 )
                 st.success("Ítem actualizado.")
+                st.session_state.stock_modo_gestion = None
+                st.rerun()
+
+    elif modo == "editar_lote" and lotes:
+        st.markdown("**✏️ Editar lote**")
+        st.caption("Para corregir un dato mal cargado (marca, n° de lote, ubicación, etc). "
+                   "La cantidad se corrige desde Chequear, no acá.")
+        lote_edit_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']}": l for l in lotes}
+        sel_edit = st.selectbox("Lote a editar", list(lote_edit_labels.keys()), key=f"editlote_sel_{item['id']}")
+        l = lote_edit_labels[sel_edit]
+
+        ce1, ce2, ce3 = st.columns(3)
+        nueva_marca = ce1.text_input("Marca", value=l["marca"], key=f"editlote_marca_{l['id']}")
+        nuevo_lote_n = ce2.text_input("N° lote", value=l["lote"], key=f"editlote_num_{l['id']}")
+        nuevo_envase = ce3.text_input("Tipo de envase", value=l["envase"], key=f"editlote_envase_{l['id']}")
+
+        nueva_ubicacion = st.text_input(
+            "Ubicación física", value=l.get("ubicacion") or "", key=f"editlote_ubic_{l['id']}"
+        )
+
+        ce4, ce5 = st.columns(2)
+        nuevo_catalogo = ce4.text_input(
+            "N° de catálogo del proveedor", value=l.get("codigo_catalogo") or "", key=f"editlote_cat_{l['id']}"
+        )
+        nuevo_sds = ce5.text_input(
+            "Link a hoja de seguridad (SDS)", value=l.get("sds_url") or "", key=f"editlote_sds_{l['id']}"
+        )
+
+        tiene_venc_edit = st.checkbox(
+            "¿Tiene fecha de vencimiento?", value=bool(l.get("fecha_vencimiento")), key=f"editlote_tienevenc_{l['id']}"
+        )
+        nueva_fecha_venc = None
+        if tiene_venc_edit:
+            fecha_default = (
+                datetime.fromisoformat(l["fecha_vencimiento"]).date()
+                if l.get("fecha_vencimiento") else datetime.now().date() + timedelta(days=365)
+            )
+            fecha_venc_dt = st.date_input("Fecha de vencimiento", value=fecha_default, key=f"editlote_fecha_{l['id']}")
+            nueva_fecha_venc = fecha_venc_dt.isoformat()
+
+        if st.button("Guardar cambios del lote", key=f"editlote_guardar_{l['id']}", type="primary"):
+            if not (nueva_marca.strip() and nuevo_lote_n.strip()):
+                st.error("Marca y N° de lote no pueden quedar vacíos.")
+            else:
+                update_lote(
+                    l["id"],
+                    marca=nueva_marca.strip(), lote=nuevo_lote_n.strip(), envase=nuevo_envase.strip() or "—",
+                    ubicacion=nueva_ubicacion.strip() or None,
+                    codigo_catalogo=nuevo_catalogo.strip() or None,
+                    sds_url=nuevo_sds.strip() or None,
+                    fecha_vencimiento=nueva_fecha_venc,
+                )
+                st.success("Lote actualizado.")
                 st.session_state.stock_modo_gestion = None
                 st.rerun()
 

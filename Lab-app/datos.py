@@ -148,6 +148,15 @@ def update_item(item_id, **campos):
     sb.table("items").update(campos).eq("id", item_id).execute()
 
 
+def update_lote(lote_id, **campos):
+    """Actualiza los datos descriptivos de un lote (marca, lote, envase,
+    ubicación, catálogo, SDS, vencimiento). A propósito NO se usa para tocar
+    stock_inicial ni cantidades — eso pasa siempre por un movimiento real
+    (Chequeo, Usar, Cargar), para no perder trazabilidad."""
+    sb = get_client()
+    sb.table("lotes").update(campos).eq("id", lote_id).execute()
+
+
 def registrar_chequeo(item_id, lote_id, stock_contado, analista, nota=""):
     """Ajusta el lote al valor contado físicamente. No cuenta como consumo."""
     stock_sistema = lote_stock(lote_id, get_lote_inicial(lote_id))
