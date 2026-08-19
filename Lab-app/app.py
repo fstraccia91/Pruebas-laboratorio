@@ -136,13 +136,26 @@ st.markdown("""
         font-weight: 500;
     }
 
-    /* La estrellita de favorito: chica, sin fondo, solo el ícono — el
+    /* Las tarjetas de ítem (Usar/Chequear) necesitan posición relativa para
+       poder "anclar" la estrella de favorito adentro, en vez de que ocupe
+       su propio renglón */
+    div[class*="st-key-tarjeta_"] {
+        position: relative;
+    }
+
+    /* La estrellita de favorito: chica, sin fondo, "flotando" a la altura
+       del renglón de stock/estado (no en su propio renglón aparte) — el
        "_fav_" está en la key de todos los botones de favorito de todos los
        ítems, así que esta única regla los alcanza a todos */
+    div[class*="_fav_"] {
+        position: absolute;
+        top: 40px;
+        right: 14px;
+    }
     div[class*="_fav_"] button {
         min-height: unset;
         width: auto;
-        padding: 2px 8px;
+        padding: 0;
         font-size: 1.1rem;
         border: none;
         background: transparent;
@@ -345,7 +358,7 @@ def tarjeta_item(item, key_prefix, favorito=False):
         etiqueta_id = etiqueta_identificador(item.get("familia_id"))
         nombre_html += f" <span style='color:#5C6B67; font-weight:400; font-size:0.95rem;'>· {etiqueta_id} {item['cas']}</span>"
 
-    with st.container(border=True):
+    with st.container(border=True, key=f"tarjeta_{key_prefix}_{item['id']}"):
         fila_titulo_pictogramas(nombre_html, item.get("riesgos"))
         st.markdown(
             f"<div style='color:#5C6B67; font-size:0.85rem; margin-top:4px;'>"
