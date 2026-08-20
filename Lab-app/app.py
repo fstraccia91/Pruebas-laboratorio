@@ -155,6 +155,15 @@ st.markdown("""
         gap: 0.4rem;
     }
 
+    /* Casilleros del menú de secciones (Usar/Chequear/Stock/...): más altos,
+       para que se vean como cuadrados en vez de rectángulos achatados */
+    div[class*="st-key-tile_"] {
+        min-height: 140px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+
     /* Inputs numéricos y de texto un poco más altos, mismo motivo */
     .stTextInput input, .stNumberInput input, .stSelectbox [data-baseweb="select"] {
         min-height: 2.6rem;
@@ -646,16 +655,18 @@ def render_familia(familia_id):
         return f"<span style='font-size:{tamano - 8}px;'>{emoji_respaldo}</span>"
 
     def _menu_cuadrados(items, prefijo):
-        cols = st.columns(4)
-        for idx, (sec_id, icon, label) in enumerate(items):
-            with cols[idx % 4]:
-                with st.container(border=True):
-                    st.markdown(
-                        f"<div style='text-align:center; margin-bottom:4px;'>{_icono_seccion_html(sec_id, icon)}</div>",
-                        unsafe_allow_html=True,
-                    )
-                    if st.button(label, key=f"{prefijo}_{sec_id}", use_container_width=True, type="primary"):
-                        yield sec_id
+        for fila_inicio in range(0, len(items), 2):
+            par = items[fila_inicio:fila_inicio + 2]
+            cols = st.columns(2)
+            for col, (sec_id, icon, label) in zip(cols, par):
+                with col:
+                    with st.container(border=True, key=f"tile_{prefijo}_{sec_id}"):
+                        st.markdown(
+                            f"<div style='text-align:center; margin-bottom:6px; padding-top:6px;'>{_icono_seccion_html(sec_id, icon, tamano=52)}</div>",
+                            unsafe_allow_html=True,
+                        )
+                        if st.button(label, key=f"{prefijo}_{sec_id}", use_container_width=True, type="primary"):
+                            yield sec_id
 
     if seccion is None:
         st.caption("Elegí qué querés hacer.")
@@ -704,12 +715,6 @@ def render_usar(familia_id):
         items = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0]
         items = filtrar_por_categoria(items, key_prefix="usar")
         items, favoritos_ids = ordenar_por_prioridad(items, familia_id)
-        with st.expander("🔧 Diagnóstico de favoritos (temporal, para revisar el orden)"):
-            nombres_fav = [i["nombre"] for i in items if i["id"] in favoritos_ids]
-            st.write(f"Analista identificado: **{st.session_state.analista_actual}**")
-            st.write(f"Favoritos guardados en la base para esta persona: {nombres_fav or '(ninguno)'}")
-            st.write("Orden final calculado, en este mismo orden:")
-            st.write([i["nombre"] for i in items])
         if not items:
             st.info("No hay ítems con stock disponible. Si algo se agotó, reponelo desde la pestaña Stock.")
         cols = st.columns(3)
