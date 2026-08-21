@@ -203,6 +203,7 @@ def _render_cilindros():
         return
 
     with st.expander("➕ Nuevo cilindro"):
+        st.caption("El certificado no se carga acá — llega recién cuando el proveedor devuelve el cilindro rellenado (📦 En depósito → 🔄 En el proveedor → \"Recibido de relleno\").")
         c1, c2, c3 = st.columns(3)
         gas = c1.selectbox("Gas", GASES, key="new_cil_gas")
         capacidad = c2.selectbox("Capacidad", [7, 9], format_func=lambda v: f"{v} m³", key="new_cil_cap")
@@ -213,16 +214,14 @@ def _render_cilindros():
             id_interno = st.text_input("ID interno del cilindro", key="new_cil_idint")
         else:
             proveedor = st.text_input("Proveedor / empresa de alquiler", key="new_cil_prov")
-        certificado = st.text_input("Link al certificado de esta carga (opcional)", key="new_cil_cert")
 
         if st.button("Guardar cilindro", key="new_cil_guardar", type="primary"):
             dg.add_cilindro(
                 gas, capacidad, modalidad, st.session_state.analista_actual,
                 id_interno=(id_interno.strip() or None) if id_interno else None,
                 proveedor=(proveedor.strip() or None) if proveedor else None,
-                certificado_url=certificado.strip() or None,
             )
-            for k in ["new_cil_gas", "new_cil_cap", "new_cil_modalidad", "new_cil_idint", "new_cil_prov", "new_cil_cert"]:
+            for k in ["new_cil_gas", "new_cil_cap", "new_cil_modalidad", "new_cil_idint", "new_cil_prov"]:
                 st.session_state.pop(k, None)
             _confirmar("✅ Cilindro dado de alta, disponible en depósito.")
             st.rerun()
@@ -373,14 +372,30 @@ def _render_editar_cilindro(cilindro_id):
 
 
 def _render_historial():
-    st.caption("Últimos movimientos de todos los cilindros.")
-    movimientos = dg.get_historial()
-    if not movimientos:
-        st.info("Todavía no hay movimientos registrados.")
-        return
+    st.caption("Últimos movimientos de todos los cilindros. Filtrá por gas y/o por tipo de movimiento.")
 
     cilindros_por_id = {c["id"]: c for c in dg.get_cilindros()}
     lineas_por_id = {l["id"]: l for l in dg.get_lineas()}
+
+    c1, c2 = st.columns([1, 2])
+    gas_filtro = c1.selectbox("Gas", ["Todos"] + GASES, key="hist_gas_filtro")
+    tipos_todos = list(TIPO_LABEL.keys())
+    tipos_sel = c2.multiselect(
+        "Tipo de movimiento", tipos_todos, default=tipos_todos,
+        format_func=lambda k: TIPO_LABEL[k][0], key="hist_tipos_filtro",
+    )
+
+    movimientos = dg.get_historial()
+    if gas_filtro != "Todos":
+        movimientos = [m for m in movimientos if cilindros_por_id.get(m["cilindro_id"], {}).get("gas") == gas_filtro]
+    if tipos_sel:
+        movimientos = [m for m in movimientos if m["tipo"] in tipos_sel]
+    else:
+        movimientos = []
+
+    if not movimientos:
+        st.info("No hay movimientos con ese filtro.")
+        return
 
     for m in movimientos:
         cil = cilindros_por_id.get(m["cilindro_id"])

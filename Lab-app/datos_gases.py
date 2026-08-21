@@ -61,18 +61,20 @@ def get_cilindro(cilindro_id):
     return res[0] if res else None
 
 
-def add_cilindro(gas, capacidad, modalidad, analista, id_interno=None, proveedor=None, certificado_url=None):
+def add_cilindro(gas, capacidad, modalidad, analista, id_interno=None, proveedor=None):
     """Da de alta un cilindro nuevo. Arranca 'lleno' (se asume que llega con
-    gas — si no fuera así, se puede corregir el estado después)."""
+    gas — si no fuera así, se puede corregir el estado después).
+    El certificado NO se pide acá: llega recién cuando el proveedor devuelve
+    el cilindro rellenado (ver recibir_de_relleno) — no en el alta."""
     sb = get_client()
     cilindro_id = str(uuid.uuid4())
     sb.table("cilindros").insert({
         "id": cilindro_id, "gas": gas, "capacidad": capacidad, "modalidad": modalidad,
         "id_interno": id_interno, "proveedor": proveedor, "estado": "lleno",
-        "certificado_actual_url": certificado_url,
+        "certificado_actual_url": None,
         "creado": datetime.now().isoformat(), "creado_por": analista,
     }).execute()
-    _registrar_movimiento(cilindro_id, "nuevo_ingreso", analista, nota="Alta de cilindro nuevo", certificado_url=certificado_url)
+    _registrar_movimiento(cilindro_id, "nuevo_ingreso", analista, nota="Alta de cilindro nuevo")
     return cilindro_id
 
 
