@@ -418,6 +418,12 @@ def _render_historial():
                 st.caption(f"Nota: {m['nota']}")
             if m.get("certificado_url"):
                 st.markdown(f"[📄 Ver certificado]({m['certificado_url']})")
+            elif m["tipo"] == "conectado":
+                cert_en_ese_momento = dg.certificado_vigente_en(m["cilindro_id"], m["fecha"])
+                if cert_en_ese_momento:
+                    st.markdown(f"[📄 Certificado vigente en ese momento]({cert_en_ese_momento})")
+                else:
+                    st.caption("Sin certificado registrado para esa carga.")
 
             with st.expander("❌ Anular este movimiento (fue un error)"):
                 motivo_anular = st.text_input("Motivo", key=f"motivo_anular_{m['id']}")

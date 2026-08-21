@@ -182,6 +182,19 @@ def get_historial(cilindro_id=None, limite=200):
     return q.order("fecha", desc=True).limit(limite).execute().data
 
 
+def certificado_vigente_en(cilindro_id, fecha_referencia):
+    """El certificado que estaba vigente en ese cilindro en un momento del
+    pasado (el último que se cargó antes o en esa fecha) — no necesariamente
+    el certificado actual, si después hubo otra recarga. Sirve para ver, por
+    ejemplo, con qué certificado se conectó tal día en particular."""
+    historial = get_historial(cilindro_id=cilindro_id, limite=500)
+    candidatos = [
+        h for h in historial
+        if h.get("certificado_url") and not h.get("anulado") and h["fecha"] <= fecha_referencia
+    ]
+    return candidatos[0]["certificado_url"] if candidatos else None
+
+
 def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota="", certificado_url=None):
     sb = get_client()
     sb.table("movimientos_cilindro").insert({
