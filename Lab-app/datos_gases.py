@@ -2,6 +2,14 @@
 Capa de datos del módulo de Gases Cromatográficos.
 No depende de Streamlit — igual que datos.py, se podría reutilizar tal cual
 en otra interfaz. Usa la misma conexión a Supabase que el resto de la app.
+
+Estados de un cilindro:
+    lleno      -> tiene gas, disponible para conectar
+    conectado  -> instalado en una línea ahora mismo
+    vacio      -> se sacó de una línea, vacío, todavía en el laboratorio,
+                  pendiente de mandarlo a rellenar
+    en_relleno -> ya se mandó físicamente al proveedor
+    retirado   -> dado de baja / devuelto definitivamente
 """
 
 import uuid
@@ -51,58 +59,73 @@ def get_cilindro(cilindro_id):
     return res[0] if res else None
 
 
-def add_cilindro(gas, capacidad, modalidad, analista, id_interno=None, proveedor=None):
+def add_cilindro(gas, capacidad, modalidad, analista, id_interno=None, proveedor=None, certificado_url=None):
+    """Da de alta un cilindro nuevo. Arranca 'lleno' (se asume que llega con
+    gas — si no fuera así, se puede corregir el estado después)."""
     sb = get_client()
     cilindro_id = str(uuid.uuid4())
     sb.table("cilindros").insert({
         "id": cilindro_id, "gas": gas, "capacidad": capacidad, "modalidad": modalidad,
-        "id_interno": id_interno, "proveedor": proveedor, "estado": "en_deposito",
+        "id_interno": id_interno, "proveedor": proveedor, "estado": "lleno",
         "creado": datetime.now().isoformat(), "creado_por": analista,
     }).execute()
-    _registrar_movimiento(cilindro_id, "nuevo_ingreso", analista, nota="Alta de cilindro nuevo")
+    _registrar_movimiento(cilindro_id, "nuevo_ingreso", analista, nota="Alta de cilindro nuevo", certificado_url=certificado_url)
     return cilindro_id
+
+
+def update_cilindro(cilindro_id, **campos):
+    """Corrige datos del cilindro (ID interno, proveedor, capacidad, gas...).
+    A propósito no toca el estado — para eso está corregir_estado()."""
+    sb = get_client()
+    sb.table("cilindros").update(campos).eq("id", cilindro_id).execute()
 
 
 def conectar_cilindro(linea_id, cilindro_id, analista, nota=""):
     """Conecta un cilindro a una línea. Si esa línea ya tenía otro cilindro
-    conectado, primero lo desconecta (queda 'en_deposito', a la espera de
-    que se decida si va a rellenar o se reutiliza)."""
+    conectado, primero lo desconecta como 'lleno' (se asume que se está
+    cambiando por algún otro motivo, no porque se vació) — si en realidad
+    estaba vacío, hay que corregirlo después con corregir_estado()."""
     sb = get_client()
     linea = sb.table("lineas_gas").select("*").eq("id", linea_id).execute().data[0]
 
     if linea.get("cilindro_actual_id"):
-        desconectar_cilindro(linea_id, analista, nota="Reemplazado automáticamente al conectar otro cilindro")
+        desconectar_cilindro(linea_id, analista, tiene_gas=True, nota="Reemplazado automáticamente al conectar otro cilindro")
 
     sb.table("lineas_gas").update({"cilindro_actual_id": cilindro_id}).eq("id", linea_id).execute()
     sb.table("cilindros").update({"estado": "conectado"}).eq("id", cilindro_id).execute()
     _registrar_movimiento(cilindro_id, "conectado", analista, linea_id=linea_id, nota=nota)
 
 
-def desconectar_cilindro(linea_id, analista, nota=""):
-    """Saca el cilindro que esté conectado en esa línea (si hay alguno) y lo
-    deja 'en_deposito' — para mandarlo a rellenar aparte, si corresponde."""
+def desconectar_cilindro(linea_id, analista, tiene_gas, nota=""):
+    """Saca el cilindro que esté conectado en esa línea (si hay alguno).
+    tiene_gas=True -> queda 'lleno' (disponible para reconectar).
+    tiene_gas=False -> queda 'vacio' (en el laboratorio, pendiente de
+    mandarlo a rellenar — eso es un paso aparte, ver enviar_a_rellenar)."""
     sb = get_client()
     linea = sb.table("lineas_gas").select("*").eq("id", linea_id).execute().data[0]
     cilindro_id = linea.get("cilindro_actual_id")
     if not cilindro_id:
         return None
 
+    nuevo_estado = "lleno" if tiene_gas else "vacio"
     sb.table("lineas_gas").update({"cilindro_actual_id": None}).eq("id", linea_id).execute()
-    sb.table("cilindros").update({"estado": "en_deposito"}).eq("id", cilindro_id).execute()
+    sb.table("cilindros").update({"estado": nuevo_estado}).eq("id", cilindro_id).execute()
     _registrar_movimiento(cilindro_id, "desconectado", analista, linea_id=linea_id, nota=nota)
     return cilindro_id
 
 
 def enviar_a_rellenar(cilindro_id, analista, nota=""):
+    """Se usa cuando el cilindro FÍSICAMENTE ya salió del laboratorio hacia
+    el proveedor — es un paso aparte y posterior a desconectarlo."""
     sb = get_client()
     sb.table("cilindros").update({"estado": "en_relleno"}).eq("id", cilindro_id).execute()
     _registrar_movimiento(cilindro_id, "enviado_a_rellenar", analista, nota=nota)
 
 
-def recibir_de_relleno(cilindro_id, analista, nota=""):
+def recibir_de_relleno(cilindro_id, analista, nota="", certificado_url=None):
     sb = get_client()
-    sb.table("cilindros").update({"estado": "en_deposito"}).eq("id", cilindro_id).execute()
-    _registrar_movimiento(cilindro_id, "recibido_de_relleno", analista, nota=nota)
+    sb.table("cilindros").update({"estado": "lleno"}).eq("id", cilindro_id).execute()
+    _registrar_movimiento(cilindro_id, "recibido_de_relleno", analista, nota=nota, certificado_url=certificado_url)
 
 
 def retirar_cilindro(cilindro_id, analista, nota=""):
@@ -113,6 +136,26 @@ def retirar_cilindro(cilindro_id, analista, nota=""):
     _registrar_movimiento(cilindro_id, "retirado", analista, nota=nota)
 
 
+def corregir_estado(cilindro_id, nuevo_estado, analista, motivo):
+    """Escape hatch para arreglar un error: 'dije que lo mandé a rellenar y
+    en realidad no', 'conecté el cilindro equivocado', etc. Registra el
+    cambio en el historial como 'correccion', con el motivo obligatorio."""
+    sb = get_client()
+    sb.table("cilindros").update({"estado": nuevo_estado}).eq("id", cilindro_id).execute()
+    _registrar_movimiento(cilindro_id, "correccion", analista, nota=f"Corrección → {nuevo_estado}: {motivo}")
+
+
+def anular_movimiento(mov_id, analista, motivo=""):
+    """No borra el movimiento — lo marca como anulado, con quién y por qué,
+    igual que en Solventes. No revierte el estado actual del cilindro solo:
+    si hace falta, corregilo aparte con corregir_estado()."""
+    sb = get_client()
+    sb.table("movimientos_cilindro").update({
+        "anulado": True, "anulado_por": analista,
+        "anulado_fecha": datetime.now().isoformat(), "anulado_motivo": motivo,
+    }).eq("id", mov_id).execute()
+
+
 def get_historial(cilindro_id=None, limite=200):
     sb = get_client()
     q = sb.table("movimientos_cilindro").select("*")
@@ -121,10 +164,11 @@ def get_historial(cilindro_id=None, limite=200):
     return q.order("fecha", desc=True).limit(limite).execute().data
 
 
-def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota=""):
+def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota="", certificado_url=None):
     sb = get_client()
     sb.table("movimientos_cilindro").insert({
         "id": str(uuid.uuid4()), "cilindro_id": cilindro_id, "tipo": tipo,
         "linea_id": linea_id, "fecha": datetime.now().isoformat(),
-        "analista": analista, "nota": nota,
+        "analista": analista, "nota": nota, "certificado_url": certificado_url,
+        "anulado": False, "anulado_por": None, "anulado_fecha": None, "anulado_motivo": None,
     }).execute()
