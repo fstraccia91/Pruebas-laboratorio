@@ -409,6 +409,17 @@ def render_home():
         st.warning("⚠️ " + " · ".join(alertas) + " — por debajo del mínimo.")
     if alertas_venc:
         st.warning("📅 " + " · ".join(alertas_venc) + " — revisar vencimiento.")
+    if gases_habilitado():
+        try:
+            from datos_gases import alertas_stock_bajo, alertas_relleno_demorado
+            alertas_gases_stock = alertas_stock_bajo(minimo=1)
+            if alertas_gases_stock:
+                gases_txt = ", ".join(g for g, _ in alertas_gases_stock)
+                st.warning(f"🛢️ Gases con pocos cilindros de repuesto: {gases_txt}.")
+            if alertas_relleno_demorado(dias_limite=30):
+                st.warning("🛢️ Hay cilindros de gas hace más de un mes en el proveedor — revisar en el módulo de Gases.")
+        except Exception:
+            pass
 
     familias = get_familias()
     cols = st.columns(len(familias))

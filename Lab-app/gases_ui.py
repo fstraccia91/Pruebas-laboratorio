@@ -8,6 +8,7 @@ código. Se llama desde app.py.
 import streamlit as st
 
 import datos_gases as dg
+from datos_gases import GASES
 from ui_helpers import titulo_seccion, subtitulo_con_icono, fila_dos_lados
 
 ESTADOS_LABEL = {
@@ -28,6 +29,7 @@ TIPO_LABEL = {
     "recibido_de_relleno": ("📥 Recibido de relleno", "Recibido por"),
     "retirado": ("🚫 Retirado", "Retirado por"),
     "correccion": ("🔧 Corrección", "Corregido por"),
+    "certificado_actualizado": ("📄 Certificado actualizado", "Actualizado por"),
 }
 
 
@@ -57,6 +59,7 @@ def render_gases():
     for clave, valor in [
         ("gases_seccion", None), ("gases_linea_id", None),
         ("confirmacion_gases", None), ("gases_editar_id", None),
+        ("gases_grupo", None), ("gases_gas_filtro", None),
     ]:
         if clave not in st.session_state:
             st.session_state[clave] = valor
@@ -66,6 +69,10 @@ def render_gases():
         if st.button("← Menú", key="btn_volver_menu"):
             if st.session_state.gases_editar_id:
                 st.session_state.gases_editar_id = None
+            elif st.session_state.gases_gas_filtro:
+                st.session_state.gases_gas_filtro = None
+            elif st.session_state.gases_grupo:
+                st.session_state.gases_grupo = None
             elif st.session_state.gases_linea_id:
                 st.session_state.gases_linea_id = None
             elif st.session_state.gases_seccion:
@@ -89,6 +96,16 @@ def render_gases():
 
 
 def _render_inicio():
+    alertas_stock = dg.alertas_stock_bajo(minimo=1)
+    if alertas_stock:
+        texto = " · ".join(f"{gas} (quedan {cant} lleno{'s' if cant != 1 else ''})" for gas, cant in alertas_stock)
+        st.warning(f"⚠️ Pocos cilindros de repuesto: {texto} — conviene mandar a rellenar.")
+
+    alertas_demora = dg.alertas_relleno_demorado(dias_limite=30)
+    if alertas_demora:
+        texto = " · ".join(f"{_etiqueta_cilindro(c)} (hace {dias} días)" for c, dias in alertas_demora)
+        st.warning(f"⏰ Hace más de un mes en el proveedor, conviene consultar: {texto}")
+
     st.caption("Estado actual de cada línea.")
     lineas = dg.get_lineas()
     cols = st.columns(2)
@@ -134,22 +151,24 @@ def _render_gestionar_linea(linea_id):
         if historial_cil:
             st.caption(f"Último movimiento: {historial_cil[0]['fecha'][:10]}")
 
-        st.markdown("**Al sacarlo, ¿todavía tiene gas o está vacío?**")
-        estado_salida = st.radio(
-            "Estado al sacarlo",
-            ["Todavía tiene gas", "Está vacío (hay que mandarlo a rellenar después)"],
-            key=f"estado_salida_{linea_id}", label_visibility="collapsed",
-        )
-        nota_saca = st.text_input("Nota (opcional)", key=f"nota_saca_{linea_id}")
-        if st.button("🔌 Desconectar", key=f"desconectar_{linea_id}", type="primary"):
-            dg.desconectar_cilindro(linea_id, analista, tiene_gas=estado_salida.startswith("Todavía"), nota=nota_saca)
-            _confirmar(f"✅ Cilindro desconectado de {linea['nombre']}.")
-            st.session_state.gases_linea_id = None
-            st.rerun()
-        st.caption(
-            "El paso de \"ya lo mandé a rellenar\" se hace aparte, desde 🛢️ Cilindros, "
-            "recién cuando el cilindro salga de verdad del laboratorio."
-        )
+        with st.container(border=True):
+            st.markdown("**🔌 Desconectar — ¿cómo sale el cilindro?**")
+            nota_saca = st.text_input("Nota (opcional)", key=f"nota_saca_{linea_id}")
+            cb1, cb2 = st.columns(2)
+            if cb1.button("🟢 Todavía tiene gas", key=f"desc_lleno_{linea_id}", use_container_width=True):
+                dg.desconectar_cilindro(linea_id, analista, tiene_gas=True, nota=nota_saca)
+                _confirmar(f"✅ Cilindro desconectado de {linea['nombre']} — queda lleno, disponible.")
+                st.session_state.gases_linea_id = None
+                st.rerun()
+            if cb2.button("🔴 Está vacío", key=f"desc_vacio_{linea_id}", use_container_width=True, type="primary"):
+                dg.desconectar_cilindro(linea_id, analista, tiene_gas=False, nota=nota_saca)
+                _confirmar(f"✅ Cilindro desconectado de {linea['nombre']} — queda vacío, pendiente de enviar a rellenar.")
+                st.session_state.gases_linea_id = None
+                st.rerun()
+            st.caption(
+                "El paso de \"ya lo mandé a rellenar\" se hace aparte, desde 🛢️ Cilindros, "
+                "recién cuando el cilindro salga de verdad del laboratorio."
+            )
 
     else:
         st.info("Esta línea no tiene ningún cilindro conectado ahora mismo.")
@@ -171,15 +190,21 @@ def _render_gestionar_linea(linea_id):
 
 
 def _render_cilindros():
-    st.caption("Organizados por estado. Tocá \"✏️ Editar\" en cualquiera para corregir un dato mal cargado.")
-
     if st.session_state.gases_editar_id:
         _render_editar_cilindro(st.session_state.gases_editar_id)
         return
 
+    if st.session_state.gases_gas_filtro:
+        _render_listado_grupo_gas(st.session_state.gases_grupo, st.session_state.gases_gas_filtro)
+        return
+
+    if st.session_state.gases_grupo:
+        _render_elegir_gas(st.session_state.gases_grupo)
+        return
+
     with st.expander("➕ Nuevo cilindro"):
         c1, c2, c3 = st.columns(3)
-        gas = c1.selectbox("Gas", ["N2", "Aire", "H2", "Argón"], key="new_cil_gas")
+        gas = c1.selectbox("Gas", GASES, key="new_cil_gas")
         capacidad = c2.selectbox("Capacidad", [7, 9], format_func=lambda v: f"{v} m³", key="new_cil_cap")
         modalidad = c3.selectbox("Modalidad", ["propio", "alquiler"], format_func=lambda v: MODALIDAD_LABEL[v], key="new_cil_modalidad")
 
@@ -202,31 +227,68 @@ def _render_cilindros():
             _confirmar("✅ Cilindro dado de alta, disponible en depósito.")
             st.rerun()
 
-    todos = dg.get_cilindros()
+    st.caption("Elegí qué grupo querés ver.")
     grupos = [
-        ("lleno", "✅ Llenos en depósito", None),
-        ("vacio", "📤 Vacíos, pendientes de enviar a rellenar", "📤 Confirmar que se envió"),
-        ("en_relleno", "🔄 En el proveedor, rellenándose", "✅ Recibido de relleno"),
-        ("conectado", "🔌 Conectados ahora mismo", None),
+        ("lleno", "📦 En depósito"),
+        ("vacio", "📤 Pedir relleno"),
+        ("en_relleno", "🔄 En el proveedor"),
+        ("conectado", "🔌 Conectados"),
     ]
+    todos = dg.get_cilindros()
+    cols = st.columns(2)
+    for idx, (clave, titulo_grupo) in enumerate(grupos):
+        cantidad = len([c for c in todos if c["estado"] == clave])
+        with cols[idx % 2]:
+            if st.button(f"{titulo_grupo} ({cantidad})", key=f"grupo_{clave}", use_container_width=True, type="primary"):
+                st.session_state.gases_grupo = clave
+                st.rerun()
 
-    for clave_estado, titulo_grupo, accion_label in grupos:
-        cilindros_grupo = [c for c in todos if c["estado"] == clave_estado]
-        st.markdown(f"#### {titulo_grupo}")
-        if not cilindros_grupo:
-            st.caption("Ninguno.")
-            continue
-        for c in cilindros_grupo:
-            with st.container(border=True):
-                izq = f"<span style='font-weight:600;'>{_etiqueta_cilindro(c)}</span>"
-                fila_dos_lados(izq, "")
 
-                cc1, cc2, cc3 = st.columns(3)
-                if clave_estado == "vacio" and cc1.button("📤 Confirmar que se envió", key=f"enviar_{c['id']}"):
-                    dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual)
-                    _confirmar(f"✅ {_etiqueta_cilindro(c)} marcado como enviado al proveedor.")
-                    st.rerun()
-                if clave_estado == "en_relleno" and cc1.button("✅ Recibido de relleno", key=f"recibido_{c['id']}"):
+def _render_elegir_gas(grupo):
+    titulos = {
+        "lleno": "📦 En depósito", "vacio": "📤 Pedir relleno",
+        "en_relleno": "🔄 En el proveedor", "conectado": "🔌 Conectados",
+    }
+    subtitulo_con_icono(titulos[grupo], "")
+    st.caption("Elegí el gas.")
+    todos = dg.get_cilindros(estado=grupo)
+    cols = st.columns(2)
+    for idx, gas in enumerate(GASES):
+        cantidad = len([c for c in todos if c["gas"] == gas])
+        with cols[idx % 2]:
+            if st.button(f"{gas} ({cantidad})", key=f"gas_{grupo}_{gas}", use_container_width=True, type="primary"):
+                st.session_state.gases_gas_filtro = gas
+                st.rerun()
+
+
+def _render_listado_grupo_gas(grupo, gas):
+    titulos = {
+        "lleno": "📦 En depósito", "vacio": "📤 Pedir relleno",
+        "en_relleno": "🔄 En el proveedor", "conectado": "🔌 Conectados",
+    }
+    subtitulo_con_icono(f"{titulos[grupo]} · {gas}", "")
+
+    cilindros_grupo = dg.get_cilindros(gas=gas, estado=grupo)
+    if not cilindros_grupo:
+        st.info("No hay ninguno acá.")
+        return
+
+    for c in cilindros_grupo:
+        with st.container(border=True):
+            izq = f"<span style='font-weight:600;'>{_etiqueta_cilindro(c)}</span>"
+            fila_dos_lados(izq, "")
+
+            if c.get("certificado_actual_url"):
+                st.markdown(f"[📄 Certificado vigente]({c['certificado_actual_url']})")
+
+            cc1, cc2, cc3 = st.columns(3)
+            if grupo == "vacio" and cc1.button("📤 Confirmar que se envió", key=f"enviar_{c['id']}"):
+                dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual)
+                _confirmar(f"✅ {_etiqueta_cilindro(c)} marcado como enviado al proveedor.")
+                st.rerun()
+
+            if grupo == "en_relleno":
+                if cc1.button("✅ Recibido de relleno", key=f"recibido_{c['id']}"):
                     st.session_state[f"mostrar_recibir_{c['id']}"] = True
                 if st.session_state.get(f"mostrar_recibir_{c['id']}"):
                     cert = st.text_input("Link al certificado de esta carga (opcional)", key=f"cert_recibir_{c['id']}")
@@ -235,13 +297,20 @@ def _render_cilindros():
                         st.session_state[f"mostrar_recibir_{c['id']}"] = False
                         _confirmar(f"✅ {_etiqueta_cilindro(c)} de vuelta en depósito, lleno.")
                         st.rerun()
-                if clave_estado == "lleno" and cc2.button("🚫 Retirar", key=f"retirar_{c['id']}"):
+
+            if grupo in ("lleno", "vacio", "en_relleno") and cc2.button("🚫 Retirar", key=f"retirar_{c['id']}"):
+                st.session_state[f"confirmar_retiro_{c['id']}"] = True
+            if st.session_state.get(f"confirmar_retiro_{c['id']}"):
+                st.warning("Esto es definitivo: significa que el cilindro no vuelve más al sistema (se devolvió o se dio de baja). No tiene que ver con sacarlo de una línea — para eso está \"Desconectar\", en la pantalla de cada línea.")
+                if st.button("Sí, retirar definitivamente", key=f"confirmar_retiro_btn_{c['id']}", type="primary"):
                     dg.retirar_cilindro(c["id"], st.session_state.analista_actual)
+                    st.session_state[f"confirmar_retiro_{c['id']}"] = False
                     _confirmar(f"✅ {_etiqueta_cilindro(c)} retirado.")
                     st.rerun()
-                if cc3.button("✏️ Editar", key=f"editar_{c['id']}"):
-                    st.session_state.gases_editar_id = c["id"]
-                    st.rerun()
+
+            if cc3.button("✏️ Editar", key=f"editar_{c['id']}"):
+                st.session_state.gases_editar_id = c["id"]
+                st.rerun()
 
 
 def _render_editar_cilindro(cilindro_id):
@@ -269,6 +338,23 @@ def _render_editar_cilindro(cilindro_id):
         st.session_state.gases_editar_id = None
         _confirmar("✅ Cilindro actualizado.")
         st.rerun()
+
+    st.divider()
+    st.markdown("**📄 Certificado vigente (de la carga de gas que tiene ahora)**")
+    if c.get("certificado_actual_url"):
+        st.markdown(f"Actual: [📄 Ver certificado]({c['certificado_actual_url']})")
+    else:
+        st.caption("Todavía no tiene ningún certificado cargado.")
+    nuevo_cert = st.text_input("Poner / corregir el link del certificado vigente", key=f"nuevo_cert_{c['id']}")
+    if st.button("Guardar como certificado vigente", key=f"guardar_cert_{c['id']}"):
+        if not nuevo_cert.strip():
+            st.error("Pegá el link del certificado.")
+        else:
+            dg.actualizar_certificado_actual(c["id"], nuevo_cert.strip(), st.session_state.analista_actual)
+            st.session_state.gases_editar_id = None
+            _confirmar("✅ Certificado vigente actualizado.")
+            st.rerun()
+    st.caption("El certificado anterior no se pierde: queda visible en el Historial de este cilindro.")
 
     st.divider()
     st.markdown("**🔧 Corregir estado actual**")

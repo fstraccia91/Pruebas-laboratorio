@@ -13,9 +13,11 @@ Estados de un cilindro:
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 
 from datos import get_client
+
+GASES = ["N2", "Aire", "H2", "Argón"]
 
 
 def modulo_habilitado():
@@ -67,6 +69,7 @@ def add_cilindro(gas, capacidad, modalidad, analista, id_interno=None, proveedor
     sb.table("cilindros").insert({
         "id": cilindro_id, "gas": gas, "capacidad": capacidad, "modalidad": modalidad,
         "id_interno": id_interno, "proveedor": proveedor, "estado": "lleno",
+        "certificado_actual_url": certificado_url,
         "creado": datetime.now().isoformat(), "creado_por": analista,
     }).execute()
     _registrar_movimiento(cilindro_id, "nuevo_ingreso", analista, nota="Alta de cilindro nuevo", certificado_url=certificado_url)
@@ -124,8 +127,21 @@ def enviar_a_rellenar(cilindro_id, analista, nota=""):
 
 def recibir_de_relleno(cilindro_id, analista, nota="", certificado_url=None):
     sb = get_client()
-    sb.table("cilindros").update({"estado": "lleno"}).eq("id", cilindro_id).execute()
+    campos = {"estado": "lleno"}
+    if certificado_url:
+        campos["certificado_actual_url"] = certificado_url
+    sb.table("cilindros").update(campos).eq("id", cilindro_id).execute()
     _registrar_movimiento(cilindro_id, "recibido_de_relleno", analista, nota=nota, certificado_url=certificado_url)
+
+
+def actualizar_certificado_actual(cilindro_id, certificado_url, analista):
+    """Poné o corregí el certificado de la carga de gas que el cilindro
+    tiene ahora mismo — sin esperar a la próxima recepción de relleno.
+    Útil para cargar el certificado de un cilindro que ya estaba en el
+    sistema antes de empezar a usar esta función."""
+    sb = get_client()
+    sb.table("cilindros").update({"certificado_actual_url": certificado_url}).eq("id", cilindro_id).execute()
+    _registrar_movimiento(cilindro_id, "certificado_actualizado", analista, nota="Certificado vigente actualizado", certificado_url=certificado_url)
 
 
 def retirar_cilindro(cilindro_id, analista, nota=""):
@@ -172,3 +188,41 @@ def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota="", c
         "analista": analista, "nota": nota, "certificado_url": certificado_url,
         "anulado": False, "anulado_por": None, "anulado_fecha": None, "anulado_motivo": None,
     }).execute()
+
+
+def _dias_desde(fecha_iso):
+    try:
+        fecha_dt = datetime.strptime(fecha_iso[:10], "%Y-%m-%d").date()
+        return (date.today() - fecha_dt).days
+    except (ValueError, TypeError):
+        return None
+
+
+def alertas_stock_bajo(minimo=1):
+    """Gases con `minimo` o menos cilindros llenos disponibles en depósito
+    (sin contar el que esté conectado) — para avisar antes de quedarse sin
+    repuesto. Devuelve [(gas, cantidad_actual), ...]."""
+    resultado = []
+    for gas in GASES:
+        cantidad = len(get_cilindros(gas=gas, estado="lleno"))
+        if cantidad <= minimo:
+            resultado.append((gas, cantidad))
+    return resultado
+
+
+def alertas_relleno_demorado(dias_limite=30):
+    """Cilindros que llevan `dias_limite` días o más en el proveedor sin
+    volver — para no perderles el rastro. Devuelve [(cilindro, dias), ...]."""
+    resultado = []
+    for c in get_cilindros(estado="en_relleno"):
+        envios = [
+            h for h in get_historial(cilindro_id=c["id"], limite=50)
+            if h["tipo"] == "enviado_a_rellenar" and not h.get("anulado")
+        ]
+        if not envios:
+            continue
+        dias = _dias_desde(envios[0]["fecha"])  # el más reciente, ya viene ordenado desc
+        if dias is not None and dias >= dias_limite:
+            resultado.append((c, dias))
+    return resultado
+
