@@ -64,14 +64,14 @@ def get_cilindro(cilindro_id):
 def add_cilindro(gas, capacidad, modalidad, analista, id_interno=None, proveedor=None):
     """Da de alta un cilindro nuevo. Arranca 'lleno' (se asume que llega con
     gas — si no fuera así, se puede corregir el estado después).
-    El certificado NO se pide acá: llega recién cuando el proveedor devuelve
+    El remito NO se pide acá: llega recién cuando el proveedor devuelve
     el cilindro rellenado (ver recibir_de_relleno) — no en el alta."""
     sb = get_client()
     cilindro_id = str(uuid.uuid4())
     sb.table("cilindros").insert({
         "id": cilindro_id, "gas": gas, "capacidad": capacidad, "modalidad": modalidad,
         "id_interno": id_interno, "proveedor": proveedor, "estado": "lleno",
-        "certificado_actual_url": None,
+        "remito_actual": None,
         "creado": datetime.now().isoformat(), "creado_por": analista,
     }).execute()
     _registrar_movimiento(cilindro_id, "nuevo_ingreso", analista, nota="Alta de cilindro nuevo")
@@ -196,29 +196,65 @@ def remito_vigente_en(cilindro_id, fecha_referencia):
     return candidatos[0]["remito_recepcion"] if candidatos else None
 
 
+def remito_envio_vigente(cilindro_id):
+    """El remito de devolución de ESTE viaje al proveedor (el más reciente
+    'enviado_a_rellenar') — no confundir con remito_actual, que es el de la
+    última vez que volvió lleno (el de la carga anterior, ya usada)."""
+    historial = get_historial(cilindro_id=cilindro_id, limite=500)
+    envios = [h for h in historial if h["tipo"] == "enviado_a_rellenar" and not h.get("anulado")]
+    return envios[0].get("remito_envio") if envios else None
+
+
+def listar_remitos(gas=None):
+    """Todos los N° de remito cargados en el sistema (de recepción o
+    corregidos desde 'Editar'), con su fecha — ordenados del más reciente al
+    más viejo. Sirve como ayuda cuando el buscador no encuentra nada, para
+    comparar contra lo que se tipeó y detectar un typo o una mayúscula
+    distinta. Devuelve [(remito, fecha), ...]."""
+    cilindros = get_cilindros(gas=gas) if gas else get_cilindros()
+    vistos = {}
+    for c in cilindros:
+        for h in get_historial(cilindro_id=c["id"], limite=500):
+            if h.get("remito_recepcion") and not h.get("anulado"):
+                r = h["remito_recepcion"]
+                if r not in vistos or h["fecha"] > vistos[r]:
+                    vistos[r] = h["fecha"]
+    return sorted(vistos.items(), key=lambda kv: kv[1], reverse=True)
+
+
 def buscar_circuito_remito(remito, gas=None, id_interno=None):
     """Dado un N° de remito de recepción (+ opcionalmente gas e ID interno
     para acotar la búsqueda), devuelve [(cilindro, movimientos), ...] con el
     circuito completo de ESA carga en particular: desde que llegó con ese
     remito hasta que llegó la carga siguiente (o hasta ahora, si es la más
-    reciente). Gas + ID interno + remito juntos identifican una carga única."""
+    reciente). Gas + ID interno + remito juntos identifican una carga única.
+    La comparación ignora mayúsculas/minúsculas y espacios de más, y
+    encuentra el remito tanto si se cargó al recibir el cilindro como si se
+    corrigió después desde 'Editar → Remito vigente'."""
+    remito_normalizado = remito.strip().casefold()
     candidatos_cilindros = get_cilindros(gas=gas) if gas else get_cilindros()
     if id_interno:
-        candidatos_cilindros = [c for c in candidatos_cilindros if c.get("id_interno") == id_interno]
+        id_interno_normalizado = id_interno.strip().casefold()
+        candidatos_cilindros = [
+            c for c in candidatos_cilindros
+            if (c.get("id_interno") or "").strip().casefold() == id_interno_normalizado
+        ]
 
+    tipos_inicio = {"recibido_de_relleno", "remito_actualizado"}
     resultados = []
     for cilindro in candidatos_cilindros:
         historial = sorted(get_historial(cilindro_id=cilindro["id"], limite=500), key=lambda h: h["fecha"])
         idx_inicio = None
         for i, h in enumerate(historial):
-            if h["tipo"] == "recibido_de_relleno" and h.get("remito_recepcion") == remito and not h.get("anulado"):
+            remito_h = (h.get("remito_recepcion") or "").strip().casefold()
+            if h["tipo"] in tipos_inicio and remito_h == remito_normalizado and not h.get("anulado"):
                 idx_inicio = i
                 break
         if idx_inicio is None:
             continue
         idx_fin = len(historial)
         for j in range(idx_inicio + 1, len(historial)):
-            if historial[j]["tipo"] == "recibido_de_relleno":
+            if historial[j]["tipo"] in tipos_inicio:
                 idx_fin = j
                 break
         resultados.append((cilindro, historial[idx_inicio:idx_fin]))

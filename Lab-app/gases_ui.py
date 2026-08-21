@@ -258,11 +258,16 @@ def _render_elegir_gas(grupo):
     todos = dg.get_cilindros(estado=grupo)
     cols = st.columns(2)
     for idx, gas in enumerate(GASES):
-        cantidad = len([c for c in todos if c["gas"] == gas])
+        cilindros_gas = [c for c in todos if c["gas"] == gas]
         with cols[idx % 2]:
-            if st.button(f"{gas} ({cantidad})", key=f"gas_{grupo}_{gas}", use_container_width=True, type="primary"):
+            if st.button(f"{gas} ({len(cilindros_gas)})", key=f"gas_{grupo}_{gas}", use_container_width=True, type="primary"):
                 st.session_state.gases_gas_filtro = gas
                 st.rerun()
+            if grupo == "en_relleno" and cilindros_gas:
+                remitos = [dg.remito_envio_vigente(c["id"]) for c in cilindros_gas]
+                remitos = [r for r in remitos if r]
+                if remitos:
+                    st.caption("🧾 " + ", ".join(remitos))
 
 
 def _render_listado_grupo_gas(grupo, gas):
@@ -282,7 +287,11 @@ def _render_listado_grupo_gas(grupo, gas):
             izq = f"<span style='font-weight:600;'>{_etiqueta_cilindro(c)}</span>"
             fila_dos_lados(izq, "")
 
-            if c.get("remito_actual"):
+            if grupo == "en_relleno":
+                remito_envio_actual = dg.remito_envio_vigente(c["id"])
+                if remito_envio_actual:
+                    st.caption(f"🧾 Remito de devolución (este viaje): {remito_envio_actual}")
+            elif c.get("remito_actual"):
                 st.caption(f"🧾 Remito vigente: {c['remito_actual']}")
 
             cc1, cc2, cc3 = st.columns(3)
@@ -474,6 +483,11 @@ def _render_buscar_circuito():
     )
     if not resultados:
         st.info("No encontré ninguna carga con ese remito (con esos filtros).")
+        remitos_existentes = dg.listar_remitos(gas=None if gas == "Cualquiera" else gas)
+        if remitos_existentes:
+            st.caption("Remitos que sí existen en el sistema" + (f" para {gas}" if gas != "Cualquiera" else "") + " (más reciente primero):")
+            for r, fecha in remitos_existentes:
+                st.write(f"- **{r}** — {fecha[:10]}")
         return
 
     lineas_por_id = {l["id"]: l for l in dg.get_lineas()}
