@@ -29,7 +29,7 @@ TIPO_LABEL = {
     "recibido_de_relleno": ("📥 Recibido de relleno", "Recibido por"),
     "retirado": ("🚫 Retirado", "Retirado por"),
     "correccion": ("🔧 Corrección", "Corregido por"),
-    "certificado_actualizado": ("📄 Certificado actualizado", "Actualizado por"),
+    "remito_actualizado": ("🧾 Remito actualizado", "Actualizado por"),
 }
 
 
@@ -91,6 +91,8 @@ def render_gases():
         _render_cilindros()
     elif st.session_state.gases_seccion == "historial":
         _render_historial()
+    elif st.session_state.gases_seccion == "buscar":
+        _render_buscar_circuito()
     else:
         _render_inicio()
 
@@ -124,12 +126,15 @@ def _render_inicio():
                     st.rerun()
 
     st.divider()
-    b1, b2 = st.columns(2)
+    b1, b2, b3 = st.columns(3)
     if b1.button("🛢️ Cilindros", use_container_width=True):
         st.session_state.gases_seccion = "cilindros"
         st.rerun()
     if b2.button("📋 Historial", use_container_width=True):
         st.session_state.gases_seccion = "historial"
+        st.rerun()
+    if b3.button("🔍 Buscar circuito", use_container_width=True):
+        st.session_state.gases_seccion = "buscar"
         st.rerun()
 
 
@@ -277,25 +282,36 @@ def _render_listado_grupo_gas(grupo, gas):
             izq = f"<span style='font-weight:600;'>{_etiqueta_cilindro(c)}</span>"
             fila_dos_lados(izq, "")
 
-            if c.get("certificado_actual_url"):
-                st.markdown(f"[📄 Certificado vigente]({c['certificado_actual_url']})")
+            if c.get("remito_actual"):
+                st.caption(f"🧾 Remito vigente: {c['remito_actual']}")
 
             cc1, cc2, cc3 = st.columns(3)
-            if grupo == "vacio" and cc1.button("📤 Confirmar que se envió", key=f"enviar_{c['id']}"):
-                dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual)
-                _confirmar(f"✅ {_etiqueta_cilindro(c)} marcado como enviado al proveedor.")
-                st.rerun()
+            if grupo == "vacio":
+                remito_envio = st.text_input(
+                    "N° de remito de devolución (obligatorio)", key=f"remito_envio_{c['id']}",
+                    help="Es el ID del retiro — sirve para reclamarle al proveedor si hace falta.",
+                )
+                if cc1.button("📤 Confirmar que se envió", key=f"enviar_{c['id']}"):
+                    if not remito_envio.strip():
+                        st.error("Ingresá el N° de remito de devolución antes de confirmar.")
+                    else:
+                        dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual, remito_envio.strip())
+                        _confirmar(f"✅ {_etiqueta_cilindro(c)} marcado como enviado al proveedor (remito {remito_envio.strip()}).")
+                        st.rerun()
 
             if grupo == "en_relleno":
                 if cc1.button("✅ Recibido de relleno", key=f"recibido_{c['id']}"):
                     st.session_state[f"mostrar_recibir_{c['id']}"] = True
                 if st.session_state.get(f"mostrar_recibir_{c['id']}"):
-                    cert = st.text_input("Link al certificado de esta carga (opcional)", key=f"cert_recibir_{c['id']}")
+                    remito_recepcion = st.text_input("N° de remito (obligatorio)", key=f"remito_recibir_{c['id']}")
                     if st.button("Confirmar recepción", key=f"confirmar_recibido_{c['id']}", type="primary"):
-                        dg.recibir_de_relleno(c["id"], st.session_state.analista_actual, certificado_url=cert.strip() or None)
-                        st.session_state[f"mostrar_recibir_{c['id']}"] = False
-                        _confirmar(f"✅ {_etiqueta_cilindro(c)} de vuelta en depósito, lleno.")
-                        st.rerun()
+                        if not remito_recepcion.strip():
+                            st.error("Ingresá el N° de remito antes de confirmar.")
+                        else:
+                            dg.recibir_de_relleno(c["id"], st.session_state.analista_actual, remito_recepcion.strip())
+                            st.session_state[f"mostrar_recibir_{c['id']}"] = False
+                            _confirmar(f"✅ {_etiqueta_cilindro(c)} de vuelta en depósito, lleno (remito {remito_recepcion.strip()}).")
+                            st.rerun()
 
             if grupo in ("lleno", "vacio", "en_relleno") and cc2.button("🚫 Retirar", key=f"retirar_{c['id']}"):
                 st.session_state[f"confirmar_retiro_{c['id']}"] = True
@@ -339,21 +355,21 @@ def _render_editar_cilindro(cilindro_id):
         st.rerun()
 
     st.divider()
-    st.markdown("**📄 Certificado vigente (de la carga de gas que tiene ahora)**")
-    if c.get("certificado_actual_url"):
-        st.markdown(f"Actual: [📄 Ver certificado]({c['certificado_actual_url']})")
+    st.markdown("**🧾 Remito vigente (de la carga de gas que tiene ahora)**")
+    if c.get("remito_actual"):
+        st.write(f"Actual: **{c['remito_actual']}**")
     else:
-        st.caption("Todavía no tiene ningún certificado cargado.")
-    nuevo_cert = st.text_input("Poner / corregir el link del certificado vigente", key=f"nuevo_cert_{c['id']}")
-    if st.button("Guardar como certificado vigente", key=f"guardar_cert_{c['id']}"):
-        if not nuevo_cert.strip():
-            st.error("Pegá el link del certificado.")
+        st.caption("Todavía no tiene ningún remito cargado.")
+    nuevo_remito = st.text_input("Poner / corregir el remito vigente", key=f"nuevo_remito_{c['id']}")
+    if st.button("Guardar como remito vigente", key=f"guardar_remito_{c['id']}"):
+        if not nuevo_remito.strip():
+            st.error("Ingresá el número de remito.")
         else:
-            dg.actualizar_certificado_actual(c["id"], nuevo_cert.strip(), st.session_state.analista_actual)
+            dg.actualizar_remito_actual(c["id"], nuevo_remito.strip(), st.session_state.analista_actual)
             st.session_state.gases_editar_id = None
-            _confirmar("✅ Certificado vigente actualizado.")
+            _confirmar("✅ Remito vigente actualizado.")
             st.rerun()
-    st.caption("El certificado anterior no se pierde: queda visible en el Historial de este cilindro.")
+    st.caption("El remito anterior no se pierde: queda visible en el Historial de este cilindro.")
 
     st.divider()
     st.markdown("**🔧 Corregir estado actual**")
@@ -416,14 +432,16 @@ def _render_historial():
             st.caption(detalle)
             if m.get("nota"):
                 st.caption(f"Nota: {m['nota']}")
-            if m.get("certificado_url"):
-                st.markdown(f"[📄 Ver certificado]({m['certificado_url']})")
+            if m["tipo"] == "enviado_a_rellenar" and m.get("remito_envio"):
+                st.caption(f"🧾 Remito de devolución: {m['remito_envio']}")
+            elif m.get("remito_recepcion"):
+                st.caption(f"🧾 Remito: {m['remito_recepcion']}")
             elif m["tipo"] == "conectado":
-                cert_en_ese_momento = dg.certificado_vigente_en(m["cilindro_id"], m["fecha"])
-                if cert_en_ese_momento:
-                    st.markdown(f"[📄 Certificado vigente en ese momento]({cert_en_ese_momento})")
+                remito_en_ese_momento = dg.remito_vigente_en(m["cilindro_id"], m["fecha"])
+                if remito_en_ese_momento:
+                    st.caption(f"🧾 Remito vigente en ese momento: {remito_en_ese_momento}")
                 else:
-                    st.caption("Sin certificado registrado para esa carga.")
+                    st.caption("Sin remito registrado para esa carga.")
 
             with st.expander("❌ Anular este movimiento (fue un error)"):
                 motivo_anular = st.text_input("Motivo", key=f"motivo_anular_{m['id']}")
@@ -431,3 +449,48 @@ def _render_historial():
                     dg.anular_movimiento(m["id"], st.session_state.analista_actual, motivo_anular)
                     _confirmar("✅ Movimiento anulado.")
                     st.rerun()
+
+
+def _render_buscar_circuito():
+    st.caption(
+        "Buscá el circuito completo de una carga en particular: Gas + N° de remito "
+        "(el ID interno es opcional, para acotar más si hace falta)."
+    )
+    c1, c2, c3 = st.columns([1, 1, 1.5])
+    gas = c1.selectbox("Gas", ["Cualquiera"] + GASES, key="buscar_gas")
+    id_interno = c2.text_input("ID interno (opcional)", key="buscar_idint")
+    remito = c3.text_input("N° de remito", key="buscar_remito")
+
+    if not st.button("🔍 Buscar", key="buscar_circuito_btn", type="primary"):
+        return
+    if not remito.strip():
+        st.error("Ingresá el número de remito.")
+        return
+
+    resultados = dg.buscar_circuito_remito(
+        remito.strip(),
+        gas=None if gas == "Cualquiera" else gas,
+        id_interno=id_interno.strip() or None,
+    )
+    if not resultados:
+        st.info("No encontré ninguna carga con ese remito (con esos filtros).")
+        return
+
+    lineas_por_id = {l["id"]: l for l in dg.get_lineas()}
+    for cilindro, movimientos in resultados:
+        st.markdown(f"### {_etiqueta_cilindro(cilindro)}")
+        st.caption(f"Remito buscado: {remito.strip()} — {len(movimientos)} movimiento{'s' if len(movimientos) != 1 else ''} en esta carga.")
+        for m in movimientos:
+            if m.get("anulado"):
+                continue
+            linea = lineas_por_id.get(m.get("linea_id"))
+            titulo_tipo, quien_label = TIPO_LABEL.get(m["tipo"], (m["tipo"], "Hecho por"))
+            with st.container(border=True):
+                st.markdown(f"**{titulo_tipo}**")
+                detalle = f"{quien_label}: {m.get('analista') or '—'} · {m['fecha'][:16].replace('T', ' ')}"
+                if linea:
+                    detalle += f" · {linea['nombre']}"
+                st.caption(detalle)
+                if m.get("nota"):
+                    st.caption(f"Nota: {m['nota']}")
+

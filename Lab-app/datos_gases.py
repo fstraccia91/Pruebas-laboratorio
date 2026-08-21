@@ -119,31 +119,32 @@ def desconectar_cilindro(linea_id, analista, tiene_gas, nota=""):
     return cilindro_id
 
 
-def enviar_a_rellenar(cilindro_id, analista, nota=""):
+def enviar_a_rellenar(cilindro_id, analista, remito_envio, nota=""):
     """Se usa cuando el cilindro FÍSICAMENTE ya salió del laboratorio hacia
-    el proveedor — es un paso aparte y posterior a desconectarlo."""
+    el proveedor — es un paso aparte y posterior a desconectarlo.
+    El número de remito de devolución es obligatorio: es el ID del retiro,
+    por si hay que reclamarle algo al proveedor."""
     sb = get_client()
     sb.table("cilindros").update({"estado": "en_relleno"}).eq("id", cilindro_id).execute()
-    _registrar_movimiento(cilindro_id, "enviado_a_rellenar", analista, nota=nota)
+    _registrar_movimiento(cilindro_id, "enviado_a_rellenar", analista, nota=nota, remito_envio=remito_envio)
 
 
-def recibir_de_relleno(cilindro_id, analista, nota="", certificado_url=None):
+def recibir_de_relleno(cilindro_id, analista, remito_recepcion, nota=""):
+    """El número de remito (el que trae el proveedor al devolver el cilindro
+    lleno) es obligatorio — reemplaza al link de certificado: el papel queda
+    archivado aparte, acá solo se guarda el número para poder rastrearlo."""
     sb = get_client()
-    campos = {"estado": "lleno"}
-    if certificado_url:
-        campos["certificado_actual_url"] = certificado_url
-    sb.table("cilindros").update(campos).eq("id", cilindro_id).execute()
-    _registrar_movimiento(cilindro_id, "recibido_de_relleno", analista, nota=nota, certificado_url=certificado_url)
+    sb.table("cilindros").update({"estado": "lleno", "remito_actual": remito_recepcion}).eq("id", cilindro_id).execute()
+    _registrar_movimiento(cilindro_id, "recibido_de_relleno", analista, nota=nota, remito_recepcion=remito_recepcion)
 
 
-def actualizar_certificado_actual(cilindro_id, certificado_url, analista):
-    """Poné o corregí el certificado de la carga de gas que el cilindro
-    tiene ahora mismo — sin esperar a la próxima recepción de relleno.
-    Útil para cargar el certificado de un cilindro que ya estaba en el
-    sistema antes de empezar a usar esta función."""
+def actualizar_remito_actual(cilindro_id, remito, analista):
+    """Poné o corregí el remito de la carga de gas que el cilindro tiene
+    ahora mismo — sin esperar a la próxima recepción. Útil para cargar el
+    remito de un cilindro que ya estaba en el sistema antes de esta función."""
     sb = get_client()
-    sb.table("cilindros").update({"certificado_actual_url": certificado_url}).eq("id", cilindro_id).execute()
-    _registrar_movimiento(cilindro_id, "certificado_actualizado", analista, nota="Certificado vigente actualizado", certificado_url=certificado_url)
+    sb.table("cilindros").update({"remito_actual": remito}).eq("id", cilindro_id).execute()
+    _registrar_movimiento(cilindro_id, "remito_actualizado", analista, nota="Remito vigente actualizado", remito_recepcion=remito)
 
 
 def retirar_cilindro(cilindro_id, analista, nota=""):
@@ -182,25 +183,55 @@ def get_historial(cilindro_id=None, limite=200):
     return q.order("fecha", desc=True).limit(limite).execute().data
 
 
-def certificado_vigente_en(cilindro_id, fecha_referencia):
-    """El certificado que estaba vigente en ese cilindro en un momento del
-    pasado (el último que se cargó antes o en esa fecha) — no necesariamente
-    el certificado actual, si después hubo otra recarga. Sirve para ver, por
-    ejemplo, con qué certificado se conectó tal día en particular."""
+def remito_vigente_en(cilindro_id, fecha_referencia):
+    """El remito que estaba vigente en ese cilindro en un momento del
+    pasado (el último recibido antes o en esa fecha) — no necesariamente el
+    remito actual, si después hubo otra recarga. Sirve para ver, por
+    ejemplo, con qué remito se conectó tal día en particular."""
     historial = get_historial(cilindro_id=cilindro_id, limite=500)
     candidatos = [
         h for h in historial
-        if h.get("certificado_url") and not h.get("anulado") and h["fecha"] <= fecha_referencia
+        if h.get("remito_recepcion") and not h.get("anulado") and h["fecha"] <= fecha_referencia
     ]
-    return candidatos[0]["certificado_url"] if candidatos else None
+    return candidatos[0]["remito_recepcion"] if candidatos else None
 
 
-def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota="", certificado_url=None):
+def buscar_circuito_remito(remito, gas=None, id_interno=None):
+    """Dado un N° de remito de recepción (+ opcionalmente gas e ID interno
+    para acotar la búsqueda), devuelve [(cilindro, movimientos), ...] con el
+    circuito completo de ESA carga en particular: desde que llegó con ese
+    remito hasta que llegó la carga siguiente (o hasta ahora, si es la más
+    reciente). Gas + ID interno + remito juntos identifican una carga única."""
+    candidatos_cilindros = get_cilindros(gas=gas) if gas else get_cilindros()
+    if id_interno:
+        candidatos_cilindros = [c for c in candidatos_cilindros if c.get("id_interno") == id_interno]
+
+    resultados = []
+    for cilindro in candidatos_cilindros:
+        historial = sorted(get_historial(cilindro_id=cilindro["id"], limite=500), key=lambda h: h["fecha"])
+        idx_inicio = None
+        for i, h in enumerate(historial):
+            if h["tipo"] == "recibido_de_relleno" and h.get("remito_recepcion") == remito and not h.get("anulado"):
+                idx_inicio = i
+                break
+        if idx_inicio is None:
+            continue
+        idx_fin = len(historial)
+        for j in range(idx_inicio + 1, len(historial)):
+            if historial[j]["tipo"] == "recibido_de_relleno":
+                idx_fin = j
+                break
+        resultados.append((cilindro, historial[idx_inicio:idx_fin]))
+    return resultados
+
+
+def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota="", remito_envio=None, remito_recepcion=None):
     sb = get_client()
     sb.table("movimientos_cilindro").insert({
         "id": str(uuid.uuid4()), "cilindro_id": cilindro_id, "tipo": tipo,
         "linea_id": linea_id, "fecha": datetime.now().isoformat(),
-        "analista": analista, "nota": nota, "certificado_url": certificado_url,
+        "analista": analista, "nota": nota,
+        "remito_envio": remito_envio, "remito_recepcion": remito_recepcion,
         "anulado": False, "anulado_por": None, "anulado_fecha": None, "anulado_motivo": None,
     }).execute()
 
