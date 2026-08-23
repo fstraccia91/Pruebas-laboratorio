@@ -164,6 +164,26 @@ def corregir_estado(cilindro_id, nuevo_estado, analista, motivo):
     _registrar_movimiento(cilindro_id, "correccion", analista, nota=f"Corrección → {nuevo_estado}: {motivo}")
 
 
+MOTIVOS_RECLAMO = ["Pago pendiente", "Tubo perdido", "Demora del proveedor", "Otro"]
+
+
+def registrar_reclamo(cilindro_id, analista, motivo, nota=""):
+    """Registra que se reclamó al proveedor por un cilindro que está
+    tardando en volver. No cambia el estado (sigue 'en_relleno') — es solo
+    un seguimiento, para saber si ya se llamó y por qué sigue sin volver.
+    Como es un movimiento más, aparece solo en el circuito del cilindro (vía
+    Buscador) y se puede filtrar en el Historial general."""
+    _registrar_movimiento(cilindro_id, "reclamo", analista, nota=nota, motivo=motivo)
+
+
+def ultimo_reclamo(cilindro_id):
+    """El reclamo más reciente hecho sobre este cilindro (o None si nunca
+    se reclamó) — para mostrar en la tarjeta de 'En el proveedor'."""
+    hist = get_historial(cilindro_id=cilindro_id, limite=50)
+    reclamos = [h for h in hist if h["tipo"] == "reclamo" and not h.get("anulado")]
+    return reclamos[0] if reclamos else None
+
+
 def anular_movimiento(mov_id, analista, motivo=""):
     """No borra el movimiento — lo marca como anulado, con quién y por qué,
     igual que en Solventes. No revierte el estado actual del cilindro solo:
@@ -231,7 +251,7 @@ def listar_remitos(gas=None):
     return sorted(vistos.items(), key=lambda kv: kv[1], reverse=True)
 
 
-def buscar_flexible(gas=None, id_interno=None, remito=None):
+def buscar_flexible(gas=None, id_interno=None, remito=None, modalidad=None):
     """Búsqueda flexible del circuito de gases — cada campo es opcional y va
     acotando de a uno:
       - Nada cargado: todo lo que hay en el sistema.
@@ -240,10 +260,13 @@ def buscar_flexible(gas=None, id_interno=None, remito=None):
         cada cilindro que matchee (todos sus ciclos/remitos, no uno solo).
       - Gas + ID + remito: solo el circuito de ESA carga puntual (desde que
         llegó con ese remito hasta la carga siguiente).
+      - modalidad: 'propio' | 'alquiler' | None (sin filtrar).
     Devuelve [(cilindro, movimientos, filtrado_por_remito), ...] — el tercer
     valor indica si esos movimientos ya vienen acotados a un remito puntual
     (para que la pantalla lo aclare) o es el historial completo del cilindro."""
     candidatos_cilindros = get_cilindros(gas=gas) if gas else get_cilindros()
+    if modalidad:
+        candidatos_cilindros = [c for c in candidatos_cilindros if c.get("modalidad") == modalidad]
     if id_interno and id_interno.strip():
         id_interno_normalizado = id_interno.strip().casefold()
         candidatos_cilindros = [
@@ -346,7 +369,8 @@ def duraciones_relleno(gas=None):
             elif h["tipo"] == "recibido_de_relleno" and inicio:
                 dias = (datetime.fromisoformat(h["fecha"]) - datetime.fromisoformat(inicio)).total_seconds() / 86400
                 resultado.append({
-                    "cilindro_id": c["id"], "gas": c["gas"],
+                    "cilindro_id": c["id"], "gas": c["gas"], "modalidad": c.get("modalidad"),
+                    "proveedor": c.get("proveedor"),
                     "identificacion": c.get("id_interno") or c.get("proveedor") or "—",
                     "fecha_envio": inicio, "dias": round(dias, 1),
                 })
@@ -354,12 +378,12 @@ def duraciones_relleno(gas=None):
     return resultado
 
 
-def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota="", remito_envio=None, remito_recepcion=None):
+def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota="", remito_envio=None, remito_recepcion=None, motivo=None):
     sb = get_client()
     sb.table("movimientos_cilindro").insert({
         "id": str(uuid.uuid4()), "cilindro_id": cilindro_id, "tipo": tipo,
         "linea_id": linea_id, "fecha": datetime.now().isoformat(),
-        "analista": analista, "nota": nota,
+        "analista": analista, "nota": nota, "motivo": motivo,
         "remito_envio": remito_envio, "remito_recepcion": remito_recepcion,
         "anulado": False, "anulado_por": None, "anulado_fecha": None, "anulado_motivo": None,
     }).execute()

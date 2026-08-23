@@ -32,6 +32,7 @@ TIPO_LABEL = {
     "retirado": ("🚫 Retirado", "Retirado por"),
     "correccion": ("🔧 Corrección", "Corregido por"),
     "remito_actualizado": ("🧾 Remito actualizado", "Actualizado por"),
+    "reclamo": ("📞 Reclamo al proveedor", "Reclamado por"),
 }
 
 COLOR_TIPO = {
@@ -43,6 +44,7 @@ COLOR_TIPO = {
     "retirado": "#A6362B",
     "correccion": "#8E24AA",
     "remito_actualizado": "#1565C0",
+    "reclamo": "#D32F2F",
 }
 
 
@@ -295,6 +297,9 @@ def _render_grupo_completo(grupo):
                 remito_envio_actual = dg.remito_envio_vigente(c["id"])
                 if remito_envio_actual:
                     st.caption(f"🧾 Remito de devolución (este viaje): {remito_envio_actual}")
+                ultimo_rec = dg.ultimo_reclamo(c["id"])
+                if ultimo_rec:
+                    st.caption(f"📞 Último reclamo: {ultimo_rec['fecha'][:10]} — {ultimo_rec.get('motivo') or 'sin motivo'}")
             elif c.get("remito_actual"):
                 st.caption(f"🧾 Remito vigente: {c['remito_actual']}")
 
@@ -329,6 +334,19 @@ def _render_grupo_completo(grupo):
                             st.session_state[f"mostrar_recibir_{c['id']}"] = False
                             _confirmar(f"✅ {_etiqueta_cilindro(c)} de vuelta en depósito, lleno (remito {remito_recepcion.strip()}).")
                             st.rerun()
+
+                if cc2.button("📞 Registrar reclamo", key=f"reclamo_{c['id']}"):
+                    st.session_state[f"mostrar_reclamo_{c['id']}"] = True
+                if st.session_state.get(f"mostrar_reclamo_{c['id']}"):
+                    motivo_reclamo = st.selectbox(
+                        "Motivo", dg.MOTIVOS_RECLAMO, key=f"motivo_reclamo_{c['id']}",
+                    )
+                    nota_reclamo = st.text_input("Nota (opcional)", key=f"nota_reclamo_{c['id']}")
+                    if st.button("Confirmar reclamo", key=f"confirmar_reclamo_{c['id']}", type="primary"):
+                        dg.registrar_reclamo(c["id"], st.session_state.analista_actual, motivo_reclamo, nota=nota_reclamo)
+                        st.session_state[f"mostrar_reclamo_{c['id']}"] = False
+                        _confirmar(f"✅ Reclamo registrado para {_etiqueta_cilindro(c)}.")
+                        st.rerun()
 
             if grupo in ("lleno", "vacio", "en_relleno") and cc2.button("🚫 Retirar", key=f"retirar_{c['id']}"):
                 st.session_state[f"confirmar_retiro_{c['id']}"] = True
@@ -447,6 +465,8 @@ def _render_historial():
             if linea:
                 detalle += f" · {linea['nombre']}"
             st.caption(detalle)
+            if m.get("motivo"):
+                st.caption(f"Motivo: {m['motivo']}")
             if m.get("nota"):
                 st.caption(f"Nota: {m['nota']}")
             if m["tipo"] == "enviado_a_rellenar" and m.get("remito_envio"):
@@ -490,6 +510,8 @@ def _tarjeta_movimiento(m, lineas_por_id, cilindro_id):
 
     partes_html = [f"<div style='font-weight:600;'>{titulo_tipo}</div>"]
     partes_html.append(f"<div style='color:#5C6B67; font-size:0.85rem;'>{detalle}</div>")
+    if m.get("motivo"):
+        partes_html.append(f"<div style='color:#5C6B67; font-size:0.8rem; margin-top:2px;'>Motivo: {m['motivo']}</div>")
     if m.get("nota"):
         partes_html.append(f"<div style='color:#5C6B67; font-size:0.8rem; margin-top:2px;'>Nota: {m['nota']}</div>")
     if remito_mostrar:
@@ -537,18 +559,21 @@ def _render_buscar_circuito():
         "Gas + ID (todo el historial de ese tubo puntual, todos sus ciclos), "
         "o Gas + ID + Remito (solo esa carga puntual). Si no cargás nada, se muestra todo."
     )
-    c1, c2, c3 = st.columns([1, 1, 1.5])
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1.3])
     gas = c1.selectbox("Gas", ["Cualquiera"] + GASES, key="buscar_gas")
-    id_interno = c2.text_input("ID interno (opcional)", key="buscar_idint")
-    remito = c3.text_input("N° de remito (opcional)", key="buscar_remito")
+    modalidad_sel = c2.selectbox("Modalidad", ["Todos", "Propio", "Alquiler"], key="buscar_modalidad")
+    id_interno = c3.text_input("ID interno (opcional)", key="buscar_idint")
+    remito = c4.text_input("N° de remito (opcional)", key="buscar_remito")
 
     if not st.button("🔍 Buscar", key="buscar_circuito_btn", type="primary"):
         return
 
+    modalidad_map = {"Propio": "propio", "Alquiler": "alquiler"}
     resultados = dg.buscar_flexible(
         gas=None if gas == "Cualquiera" else gas,
         id_interno=id_interno.strip() or None,
         remito=remito.strip() or None,
+        modalidad=modalidad_map.get(modalidad_sel),
     )
     if not resultados:
         st.info("No encontré ningún cilindro con esos filtros.")
@@ -631,6 +656,7 @@ def _render_graficos():
             promedio_por_cilindro, x="Cilindro", y="Promedio de días conectado",
             title=f"Duración promedio por cilindro — {gas_filtro}",
         )
+        fig2.update_xaxes(type="category")
         st.plotly_chart(fig2, use_container_width=True)
 
     st.divider()
@@ -640,13 +666,31 @@ def _render_graficos():
     if not datos_relleno:
         st.info("Todavía no hay ciclos completos (enviado → recibido) para graficar.")
     else:
-        df_relleno = pd.DataFrame(datos_relleno)
-        promedio_por_gas = df_relleno.groupby("gas")["dias"].mean().reset_index()
-        promedio_por_gas.columns = ["Gas", "Promedio de días en el proveedor"]
-        fig3 = px.bar(
-            promedio_por_gas, x="Gas", y="Promedio de días en el proveedor",
-            title="Tiempo promedio de devolución del proveedor, por gas",
+        agrupar = st.radio(
+            "Agrupar por", ["Todos juntos", "Separado por modalidad/proveedor"],
+            key="graf_relleno_agrupar", horizontal=True,
         )
+        df_relleno = pd.DataFrame(datos_relleno)
+        if agrupar == "Todos juntos":
+            promedio_por_gas = df_relleno.groupby("gas")["dias"].mean().reset_index()
+            promedio_por_gas.columns = ["Gas", "Promedio de días en el proveedor"]
+            fig3 = px.bar(
+                promedio_por_gas, x="Gas", y="Promedio de días en el proveedor",
+                title="Tiempo promedio de devolución del proveedor, por gas",
+            )
+            fig3.update_xaxes(type="category")
+        else:
+            df_relleno["Modalidad/Proveedor"] = df_relleno.apply(
+                lambda r: "Propio" if r["modalidad"] == "propio" else f"Alquiler ({r['proveedor']})" if r.get("proveedor") else "Alquiler",
+                axis=1,
+            )
+            promedio_grupo = df_relleno.groupby(["gas", "Modalidad/Proveedor"])["dias"].mean().reset_index()
+            promedio_grupo.columns = ["Gas", "Modalidad/Proveedor", "Promedio de días en el proveedor"]
+            fig3 = px.bar(
+                promedio_grupo, x="Gas", y="Promedio de días en el proveedor", color="Modalidad/Proveedor",
+                barmode="group", title="Tiempo promedio de devolución, separado por modalidad/proveedor",
+            )
+            fig3.update_xaxes(type="category")
         st.plotly_chart(fig3, use_container_width=True)
 
 
