@@ -90,7 +90,7 @@ def elegir_lote(lotes, item, key_prefix, requiere_confirmar=False):
                 venc = etiqueta_vencimiento(l["fecha_vencimiento"])
                 if venc != "—":
                     st.caption(venc)
-                if l.get("sds_url"):
+                if item.get("familia_id") != "cromato" and l.get("sds_url"):
                     st.markdown(f"[📄 SDS]({l['sds_url']})")
                 if st.button(
                     "✓ Elegido" if elegido else "Elegir",
@@ -389,37 +389,7 @@ def render_home():
         st.rerun()
     titulo_seccion(NOMBRE_LABORATORIO, "🧪")
 
-    alertas = []
-    alertas_venc = []
-    for fam in get_familias():
-        if not fam["activo"]:
-            continue
-        for i in get_items(fam["id"]):
-            stock = item_stock(i["id"])
-            if stock <= i["stock_minimo"]:
-                alertas.append(f"{i['nombre']} ({fam['nombre']}): {stock} {i['unidad']}")
-            for l in get_lotes(i["id"]):
-                dias = dias_para_vencer(l["fecha_vencimiento"])
-                if dias is not None and dias <= 60:
-                    estado_venc = "vencido" if dias < 0 else f"vence en {dias}d"
-                    alertas_venc.append(f"{i['nombre']} · lote {l['lote']} ({estado_venc})")
-    if alertas:
-        st.warning("⚠️ " + " · ".join(alertas) + " — por debajo del mínimo.")
-    if alertas_venc:
-        st.warning("📅 " + " · ".join(alertas_venc) + " — revisar vencimiento.")
-
     hay_gases = gases_habilitado()
-    if hay_gases:
-        try:
-            from datos_gases import alertas_stock_bajo, alertas_relleno_demorado
-            alertas_gases_stock = alertas_stock_bajo(minimo=1)
-            if alertas_gases_stock:
-                gases_txt = ", ".join(g for g, _ in alertas_gases_stock)
-                st.warning(f"🛢️ Gases con pocos cilindros de repuesto: {gases_txt}.")
-            if alertas_relleno_demorado(dias_limite=30):
-                st.warning("🛢️ Hay cilindros de gas hace más de un mes en el proveedor — revisar en el módulo de Gases.")
-        except Exception:
-            pass
 
     familias = get_familias()
     total_botones = len(familias) + (1 if hay_gases else 0)
@@ -580,7 +550,6 @@ def render_usar(familia_id):
 
     if item is None or item_stock(item["id"]) <= 0:
         st.session_state.item_id = None
-        st.caption("Tocá el solvente que necesitás usar.")
         items = [i for i in get_items(familia_id) if item_stock(i["id"]) > 0]
         items = filtrar_por_categoria(items, key_prefix="usar")
         items, favoritos_ids = ordenar_por_prioridad(items, familia_id)
@@ -671,7 +640,6 @@ def render_chequear(familia_id):
 
     if item is None:
         st.session_state.item_chequeo_id = None
-        st.caption("Tocá el solvente que querés chequear.")
         items = get_items(familia_id)
         items = filtrar_por_categoria(items, key_prefix="chk")
         items, favoritos_ids = ordenar_por_prioridad(items, familia_id)
@@ -846,13 +814,16 @@ def render_stock(familia_id):
             categoria_final = categoria_sel
 
         riesgos_previos = (prellenado.get("riesgos") or "").split(",") if prellenado and prellenado.get("riesgos") else []
-        riesgos_sel = st.multiselect(
-            "Clase de riesgo (opcional)",
-            options=list(RIESGOS_GHS.keys()),
-            default=[r for r in riesgos_previos if r in RIESGOS_GHS],
-            format_func=lambda k: RIESGOS_GHS[k][0],
-            key=f"new_item_riesgos_{sufijo_key}",
-        )
+        if familia_id != "cromato":
+            riesgos_sel = st.multiselect(
+                "Clase de riesgo (opcional)",
+                options=list(RIESGOS_GHS.keys()),
+                default=[r for r in riesgos_previos if r in RIESGOS_GHS],
+                format_func=lambda k: RIESGOS_GHS[k][0],
+                key=f"new_item_riesgos_{sufijo_key}",
+            )
+        else:
+            riesgos_sel = []
 
         guardar_en_catalogo = False
         if prellenado is None:
@@ -883,7 +854,6 @@ def render_stock(familia_id):
                 st.rerun()
             else:
                 st.error("Ingresá un nombre.")
-        st.caption("Cargá cada grado o marca (HPLC, PA, ACS...) como un ítem distinto: se controlan por separado.")
 
     mostrar_agotados = st.checkbox("Mostrar también los ítems agotados (stock = 0)", value=True)
 
@@ -942,6 +912,7 @@ def render_gestion_item(item):
     st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
 
     lotes = get_lotes(item["id"])
+    mostrar_sds = item.get("familia_id") != "cromato"
     if lotes:
         df = pd.DataFrame([{
             "Marca": l["marca"], "Lote": l["lote"], "Envase": l["envase"],
@@ -949,7 +920,7 @@ def render_gestion_item(item):
             "Stock actual": lote_stock(l["id"], l["stock_inicial"]),
             "Ubicación": l.get("ubicacion") or "—",
             "N° catálogo": l.get("codigo_catalogo") or "—",
-            "SDS": l.get("sds_url") or None,
+            **({"SDS": l.get("sds_url") or None} if mostrar_sds else {}),
             "Vencimiento": etiqueta_vencimiento(l["fecha_vencimiento"]),
             "Último chequeo": (
                 f"{ultimo_chequeo(l['id'])['fecha'][:10]} ({ultimo_chequeo(l['id'])['analista']})"
@@ -959,7 +930,7 @@ def render_gestion_item(item):
         } for l in lotes])
         st.dataframe(
             df, hide_index=True, use_container_width=True,
-            column_config={"SDS": st.column_config.LinkColumn("SDS", display_text="📄 Ver")},
+            column_config={"SDS": st.column_config.LinkColumn("SDS", display_text="📄 Ver")} if mostrar_sds else None,
         )
     else:
         st.caption("Sin lotes todavía.")
@@ -1039,13 +1010,19 @@ def render_gestion_item(item):
             "Ubicación física", value=l.get("ubicacion") or "", key=f"editlote_ubic_{l['id']}"
         )
 
-        ce4, ce5 = st.columns(2)
-        nuevo_catalogo = ce4.text_input(
-            "N° de catálogo del proveedor", value=l.get("codigo_catalogo") or "", key=f"editlote_cat_{l['id']}"
-        )
-        nuevo_sds = ce5.text_input(
-            "Link a hoja de seguridad (SDS)", value=l.get("sds_url") or "", key=f"editlote_sds_{l['id']}"
-        )
+        if item.get("familia_id") != "cromato":
+            ce4, ce5 = st.columns(2)
+            nuevo_catalogo = ce4.text_input(
+                "N° de catálogo del proveedor", value=l.get("codigo_catalogo") or "", key=f"editlote_cat_{l['id']}"
+            )
+            nuevo_sds = ce5.text_input(
+                "Link a hoja de seguridad (SDS)", value=l.get("sds_url") or "", key=f"editlote_sds_{l['id']}"
+            )
+        else:
+            nuevo_catalogo = st.text_input(
+                "N° de catálogo del proveedor", value=l.get("codigo_catalogo") or "", key=f"editlote_cat_{l['id']}"
+            )
+            nuevo_sds = l.get("sds_url") or ""
 
         tiene_venc_edit = st.checkbox(
             "¿Tiene fecha de vencimiento?", value=bool(l.get("fecha_vencimiento")), key=f"editlote_tienevenc_{l['id']}"
@@ -1117,9 +1094,13 @@ def render_gestion_item(item):
         )
 
         st.caption("Datos de este proveedor/marca en particular (opcional):")
-        p1, p2 = st.columns(2)
-        codigo_catalogo = p1.text_input("N° de catálogo del proveedor", key=f"catalogo_{item['id']}")
-        sds_url = p2.text_input("Link a hoja de seguridad (SDS)", key=f"sds_{item['id']}")
+        if item.get("familia_id") != "cromato":
+            p1, p2 = st.columns(2)
+            codigo_catalogo = p1.text_input("N° de catálogo del proveedor", key=f"catalogo_{item['id']}")
+            sds_url = p2.text_input("Link a hoja de seguridad (SDS)", key=f"sds_{item['id']}")
+        else:
+            codigo_catalogo = st.text_input("N° de catálogo del proveedor", key=f"catalogo_{item['id']}")
+            sds_url = ""
 
         if st.button("Guardar lote", key=f"addlote_{item['id']}", type="primary"):
             if not (marca.strip() and lote_n.strip()):

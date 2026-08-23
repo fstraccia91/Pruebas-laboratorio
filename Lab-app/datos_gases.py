@@ -231,42 +231,53 @@ def listar_remitos(gas=None):
     return sorted(vistos.items(), key=lambda kv: kv[1], reverse=True)
 
 
-def buscar_circuito_remito(remito, gas=None, id_interno=None):
-    """Dado un N° de remito de recepción (+ opcionalmente gas e ID interno
-    para acotar la búsqueda), devuelve [(cilindro, movimientos), ...] con el
-    circuito completo de ESA carga en particular: desde que llegó con ese
-    remito hasta que llegó la carga siguiente (o hasta ahora, si es la más
-    reciente). Gas + ID interno + remito juntos identifican una carga única.
-    La comparación ignora mayúsculas/minúsculas y espacios de más, y
-    encuentra el remito tanto si se cargó al recibir el cilindro como si se
-    corrigió después desde 'Editar → Remito vigente'."""
-    remito_normalizado = remito.strip().casefold()
+def buscar_flexible(gas=None, id_interno=None, remito=None):
+    """Búsqueda flexible del circuito de gases — cada campo es opcional y va
+    acotando de a uno:
+      - Nada cargado: todo lo que hay en el sistema.
+      - Solo gas: todos los cilindros de ese gas, cada uno con su historial completo.
+      - Gas (+ opcional ID interno), sin remito: el historial COMPLETO de
+        cada cilindro que matchee (todos sus ciclos/remitos, no uno solo).
+      - Gas + ID + remito: solo el circuito de ESA carga puntual (desde que
+        llegó con ese remito hasta la carga siguiente).
+    Devuelve [(cilindro, movimientos, filtrado_por_remito), ...] — el tercer
+    valor indica si esos movimientos ya vienen acotados a un remito puntual
+    (para que la pantalla lo aclare) o es el historial completo del cilindro."""
     candidatos_cilindros = get_cilindros(gas=gas) if gas else get_cilindros()
-    if id_interno:
+    if id_interno and id_interno.strip():
         id_interno_normalizado = id_interno.strip().casefold()
         candidatos_cilindros = [
             c for c in candidatos_cilindros
             if (c.get("id_interno") or "").strip().casefold() == id_interno_normalizado
         ]
 
-    tipos_inicio = {"recibido_de_relleno", "remito_actualizado"}
     resultados = []
-    for cilindro in candidatos_cilindros:
-        historial = sorted(get_historial(cilindro_id=cilindro["id"], limite=500), key=lambda h: h["fecha"])
-        idx_inicio = None
-        for i, h in enumerate(historial):
-            remito_h = (h.get("remito_recepcion") or "").strip().casefold()
-            if h["tipo"] in tipos_inicio and remito_h == remito_normalizado and not h.get("anulado"):
-                idx_inicio = i
-                break
-        if idx_inicio is None:
-            continue
-        idx_fin = len(historial)
-        for j in range(idx_inicio + 1, len(historial)):
-            if historial[j]["tipo"] in tipos_inicio:
-                idx_fin = j
-                break
-        resultados.append((cilindro, historial[idx_inicio:idx_fin]))
+
+    if remito and remito.strip():
+        remito_normalizado = remito.strip().casefold()
+        tipos_inicio = {"recibido_de_relleno", "remito_actualizado"}
+        for cilindro in candidatos_cilindros:
+            historial = sorted(get_historial(cilindro_id=cilindro["id"], limite=500), key=lambda h: h["fecha"])
+            idx_inicio = None
+            for i, h in enumerate(historial):
+                remito_h = (h.get("remito_recepcion") or "").strip().casefold()
+                if h["tipo"] in tipos_inicio and remito_h == remito_normalizado and not h.get("anulado"):
+                    idx_inicio = i
+                    break
+            if idx_inicio is None:
+                continue
+            idx_fin = len(historial)
+            for j in range(idx_inicio + 1, len(historial)):
+                if historial[j]["tipo"] in tipos_inicio:
+                    idx_fin = j
+                    break
+            resultados.append((cilindro, historial[idx_inicio:idx_fin], True))
+    else:
+        # Sin remito: el historial completo de cada cilindro que matchee gas/ID.
+        for cilindro in candidatos_cilindros:
+            historial = sorted(get_historial(cilindro_id=cilindro["id"], limite=500), key=lambda h: h["fecha"], reverse=True)
+            resultados.append((cilindro, historial, False))
+
     return resultados
 
 

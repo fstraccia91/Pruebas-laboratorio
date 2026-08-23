@@ -452,41 +452,40 @@ def _render_historial():
 
 def _render_buscar_circuito():
     st.caption(
-        "Buscá el circuito completo de una carga en particular: Gas + N° de remito "
-        "(el ID interno es opcional, para acotar más si hace falta)."
+        "Buscá con lo que tengas — cada campo es opcional y va acotando: "
+        "solo Gas (todos los tubos de ese gas, con su historial completo), "
+        "Gas + ID (todo el historial de ese tubo puntual, todos sus ciclos), "
+        "o Gas + ID + Remito (solo esa carga puntual). Si no cargás nada, se muestra todo."
     )
     c1, c2, c3 = st.columns([1, 1, 1.5])
     gas = c1.selectbox("Gas", ["Cualquiera"] + GASES, key="buscar_gas")
     id_interno = c2.text_input("ID interno (opcional)", key="buscar_idint")
-    remito = c3.text_input("N° de remito", key="buscar_remito")
+    remito = c3.text_input("N° de remito (opcional)", key="buscar_remito")
 
     if not st.button("🔍 Buscar", key="buscar_circuito_btn", type="primary"):
         return
-    if not remito.strip():
-        st.error("Ingresá el número de remito.")
-        return
 
-    resultados = dg.buscar_circuito_remito(
-        remito.strip(),
+    resultados = dg.buscar_flexible(
         gas=None if gas == "Cualquiera" else gas,
         id_interno=id_interno.strip() or None,
+        remito=remito.strip() or None,
     )
     if not resultados:
-        st.info("No encontré ninguna carga con ese remito (con esos filtros).")
-        remitos_existentes = dg.listar_remitos(gas=None if gas == "Cualquiera" else gas)
-        if remitos_existentes:
-            st.caption("Remitos que sí existen en el sistema" + (f" para {gas}" if gas != "Cualquiera" else "") + " (más reciente primero):")
-            for r, fecha in remitos_existentes:
-                st.write(f"- **{r}** — {fecha[:10]}")
+        st.info("No encontré ningún cilindro con esos filtros.")
         return
 
     lineas_por_id = {l["id"]: l for l in dg.get_lineas()}
-    for cilindro, movimientos in resultados:
+    st.caption(f"{len(resultados)} cilindro{'s' if len(resultados) != 1 else ''} encontrado{'s' if len(resultados) != 1 else ''}.")
+    for cilindro, movimientos, acotado_por_remito in resultados:
         st.markdown(f"### {_etiqueta_cilindro(cilindro)}")
-        st.caption(f"Remito buscado: {remito.strip()} — {len(movimientos)} movimiento{'s' if len(movimientos) != 1 else ''} en esta carga.")
-        for m in movimientos:
-            if m.get("anulado"):
-                continue
+        movimientos_visibles = [m for m in movimientos if not m.get("anulado")]
+        if acotado_por_remito:
+            st.caption(f"Remito buscado: {remito.strip()} — {len(movimientos_visibles)} movimiento{'s' if len(movimientos_visibles) != 1 else ''} en esta carga.")
+        else:
+            st.caption(f"Historial completo — {len(movimientos_visibles)} movimiento{'s' if len(movimientos_visibles) != 1 else ''}.")
+        if not movimientos_visibles:
+            st.caption("Sin movimientos para mostrar.")
+        for m in movimientos_visibles:
             linea = lineas_por_id.get(m.get("linea_id"))
             titulo_tipo, quien_label = TIPO_LABEL.get(m["tipo"], (m["tipo"], "Hecho por"))
             with st.container(border=True):
@@ -497,4 +496,8 @@ def _render_buscar_circuito():
                 st.caption(detalle)
                 if m.get("nota"):
                     st.caption(f"Nota: {m['nota']}")
+                if m.get("remito_envio"):
+                    st.caption(f"🧾 Remito de devolución: {m['remito_envio']}")
+                if m.get("remito_recepcion"):
+                    st.caption(f"🧾 Remito: {m['remito_recepcion']}")
 
