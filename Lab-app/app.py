@@ -32,12 +32,13 @@ from datos import (
     eliminar_lote, contar_lotes_item, eliminar_item, update_item, update_lote, registrar_chequeo, get_lote_inicial,
     daily_consumption, stock_series, add_item, add_lote, get_envases, add_movimiento,
     get_personas, add_persona, toggle_persona, delete_persona, get_catalogo, add_catalogo_entry,
-    get_favoritos_ids, toggle_favorito, conteo_usos_recientes,
+    get_favoritos_ids, toggle_favorito, conteo_usos_recientes, get_cambios,
+    get_secciones_ocultas, set_secciones_ocultas,
 )
 from logica import (
     NOMBRE_LABORATORIO, SUBTITULO_LABORATORIO, NOMBRE_SOFTWARE, VERSION_SOFTWARE,
     UNIDADES, VENTANAS, TIPOS_CARGA, RIESGOS_GHS, convertir_unidad, dias_para_vencer,
-    etiqueta_vencimiento, estado, _color_estado, etiqueta_identificador,
+    etiqueta_vencimiento, estado, _color_estado, etiqueta_identificador, color_estado_lote,
 )
 from ui_helpers import (
     _img_b64, _buscar_imagen, _mime_tipo, _img_datauri, icono_familia_html,
@@ -84,6 +85,11 @@ def elegir_lote(lotes, item, key_prefix, requiere_confirmar=False):
         izquierda_html = f"<div style='color:#5C6B67; font-size:0.85rem;'>{stock_l} {item['unidad']}</div>"
         derecha_html = f"<div style='color:#5C6B67; font-size:0.78rem;'>📍 {l['ubicacion']}</div>" if l.get("ubicacion") else ""
         with cols[idx % len(cols)]:
+            color_borde = color_estado_lote(stock_l, item.get("stock_minimo", 0), l["fecha_vencimiento"])
+            st.markdown(
+                f"<div style='height:5px; background:{color_borde}; border-radius:4px 4px 0 0;'></div>",
+                unsafe_allow_html=True,
+            )
             with st.container(border=True):
                 fila_titulo_pictogramas(titulo_html, item.get("riesgos"), tamano_picto=20)
                 fila_dos_lados(izquierda_html, derecha_html)
@@ -333,14 +339,27 @@ if "ir_aplicado" not in st.session_state:
 
 
 if not st.session_state.ir_aplicado:
+    _familia_param = st.query_params.get("familia")
+    _linea_param = st.query_params.get("linea")
     _ir = st.query_params.get("ir")
     _secciones_top = {"usar", "chequear", "stock"}
-    _secciones_labo = {"movimientos", "compras", "graficos", "personas"}
-    if _ir in _secciones_top:
-        st.session_state.seccion_activa = _ir
-    elif _ir in _secciones_labo:
-        st.session_state.seccion_activa = "gestion_labo"
-        st.session_state.subseccion_activa = _ir
+    _secciones_labo = {"movimientos", "compras", "graficos", "personas", "buscar"}
+
+    if _linea_param:
+        # QR pegado en una cabina de gas: entra directo a esa línea.
+        st.session_state.familia_id = "__gases__"
+        st.session_state.gases_linea_id = _linea_param
+    else:
+        if _familia_param:
+            if _familia_param == "gases":
+                st.session_state.familia_id = "__gases__"
+            elif _familia_param in {f["id"] for f in get_familias()}:
+                st.session_state.familia_id = _familia_param
+        if _ir in _secciones_top:
+            st.session_state.seccion_activa = _ir
+        elif _ir in _secciones_labo:
+            st.session_state.seccion_activa = "gestion_labo"
+            st.session_state.subseccion_activa = _ir
     st.session_state.ir_aplicado = True
 
 
@@ -424,6 +443,9 @@ def render_home():
                 st.session_state.familia_id = "__gases__"
                 st.rerun()
 
+    with st.expander("🏷️ Códigos QR para imprimir"):
+        render_qr_codigos()
+
 
 
 def render_familia(familia_id):
@@ -470,6 +492,7 @@ def render_familia(familia_id):
         ("compras", "🛒", "Compras"),
         ("graficos", "📊", "Gráficos"),
         ("personas", "👥", "Personas"),
+        ("buscar", "🔎", "Buscar historial"),
     ]
     renderers = {
         "usar": lambda: render_usar(familia_id),
@@ -479,6 +502,7 @@ def render_familia(familia_id):
         "compras": lambda: render_compras(familia_id),
         "graficos": lambda: render_graficos(familia_id),
         "personas": lambda: render_personas(),
+        "buscar": lambda: render_buscar_historial(familia_id),
     }
 
     ICONOS_BASE = {
@@ -513,19 +537,64 @@ def render_familia(familia_id):
                             yield sec_id
 
     if seccion is None:
+        persona_actual = st.session_state.analista_actual
+        ocultas_todas = get_secciones_ocultas(persona_actual)
+        ocultas_este_modulo = ocultas_todas.get(familia_id, [])
+        secciones_visibles = [s for s in secciones_principales if s[0] not in ocultas_este_modulo]
+
         st.caption("Elegí qué querés hacer.")
-        elegido = list(_menu_cuadrados(secciones_principales, "sec"))
-        if elegido:
-            st.session_state.seccion_activa = elegido[0]
-            st.rerun()
+        if secciones_visibles:
+            elegido = list(_menu_cuadrados(secciones_visibles, "sec"))
+            if elegido:
+                st.session_state.seccion_activa = elegido[0]
+                st.rerun()
+        else:
+            st.info("Ocultaste todas las secciones acá. Usá \"⚙️ Personalizar\" abajo para volver a mostrar alguna.")
+
+        with st.expander("⚙️ Personalizar qué ver acá"):
+            st.caption("Ocultá lo que no usás en este módulo — podés volver a mostrarlo cuando quieras.")
+            elegidas = st.multiselect(
+                "Secciones visibles",
+                options=[s[0] for s in secciones_principales],
+                default=[s[0] for s in secciones_principales if s[0] not in ocultas_este_modulo],
+                format_func=lambda sid: next(s[2] for s in secciones_principales if s[0] == sid),
+                key=f"personalizar_{familia_id}",
+            )
+            if st.button("Guardar", key=f"personalizar_guardar_{familia_id}"):
+                nuevas_ocultas = [s[0] for s in secciones_principales if s[0] not in elegidas]
+                set_secciones_ocultas(persona_actual, familia_id, nuevas_ocultas)
+                st.rerun()
 
     elif seccion == "gestion_labo":
         if subseccion is None:
+            persona_actual = st.session_state.analista_actual
+            ocultas_todas = get_secciones_ocultas(persona_actual)
+            modulo_labo = f"{familia_id}_labo"
+            ocultas_labo = ocultas_todas.get(modulo_labo, [])
+            labo_visibles = [s for s in secciones_labo if s[0] not in ocultas_labo]
+
             st.caption("Gestión de Laboratorio")
-            elegido = list(_menu_cuadrados(secciones_labo, "sub"))
-            if elegido:
-                st.session_state.subseccion_activa = elegido[0]
-                st.rerun()
+            if labo_visibles:
+                elegido = list(_menu_cuadrados(labo_visibles, "sub"))
+                if elegido:
+                    st.session_state.subseccion_activa = elegido[0]
+                    st.rerun()
+            else:
+                st.info("Ocultaste todas las secciones acá. Usá \"⚙️ Personalizar\" abajo para volver a mostrar alguna.")
+
+            with st.expander("⚙️ Personalizar qué ver acá"):
+                st.caption("Ocultá lo que no usás en Gestión de Laboratorio — podés volver a mostrarlo cuando quieras.")
+                elegidas_labo = st.multiselect(
+                    "Secciones visibles",
+                    options=[s[0] for s in secciones_labo],
+                    default=[s[0] for s in secciones_labo if s[0] not in ocultas_labo],
+                    format_func=lambda sid: next(s[2] for s in secciones_labo if s[0] == sid),
+                    key=f"personalizar_labo_{familia_id}",
+                )
+                if st.button("Guardar", key=f"personalizar_labo_guardar_{familia_id}"):
+                    nuevas_ocultas_labo = [s[0] for s in secciones_labo if s[0] not in elegidas_labo]
+                    set_secciones_ocultas(persona_actual, modulo_labo, nuevas_ocultas_labo)
+                    st.rerun()
         else:
             nombre_sub = next(lbl for sid, ico, lbl in secciones_labo if sid == subseccion)
             icono_sub = next(ico for sid, ico, lbl in secciones_labo if sid == subseccion)
@@ -990,7 +1059,7 @@ def render_gestion_item(item):
                 st.error("El nombre no puede quedar vacío.")
             else:
                 update_item(
-                    item["id"],
+                    item["id"], analista=st.session_state.analista_actual,
                     nombre=nuevo_nombre.strip(), unidad=nueva_unidad, stock_minimo=nuevo_minimo,
                     cas=nuevo_cas.strip() or None, riesgos=nuevos_riesgos, categoria=nueva_categoria.strip() or None,
                 )
@@ -1046,7 +1115,7 @@ def render_gestion_item(item):
                 st.error("Marca y N° de lote no pueden quedar vacíos.")
             else:
                 update_lote(
-                    l["id"],
+                    l["id"], analista=st.session_state.analista_actual,
                     marca=nueva_marca.strip(), lote=nuevo_lote_n.strip(), envase=nuevo_envase.strip() or "—",
                     ubicacion=nueva_ubicacion.strip() or None,
                     codigo_catalogo=nuevo_catalogo.strip() or None,
@@ -1198,6 +1267,121 @@ def render_gestion_item(item):
             eliminar_item(item["id"])
             st.session_state.item_gestion_id = None
             st.rerun()
+
+
+TIPO_MOV_LABEL = {"out": "📤 Uso", "in": "📥 Carga", "ajuste": "🔍 Chequeo (ajuste)"}
+
+
+def render_buscar_historial(familia_id):
+    st.caption("Elegí un ítem y un lote para ver toda su historia en un solo lugar: alta, usos, cargas, chequeos y ediciones.")
+    items = get_items(familia_id)
+    if not items:
+        st.info("Todavía no hay ítems cargados.")
+        return
+
+    nombres_items = {i["nombre"]: i for i in sorted(items, key=lambda i: i["nombre"])}
+    nombre_sel = st.selectbox("Ítem", list(nombres_items.keys()), key="buscar_hist_item")
+    item = nombres_items[nombre_sel]
+
+    lotes = get_lotes(item["id"])
+    if not lotes:
+        st.info("Este ítem todavía no tiene lotes cargados.")
+        return
+    lote_labels = {f"{l['marca']} · lote {l['lote']} · {l['envase']}": l for l in lotes}
+    lote_sel = st.selectbox("Lote", list(lote_labels.keys()), key="buscar_hist_lote")
+    lote = lote_labels[lote_sel]
+
+    stock_actual = lote_stock(lote["id"], lote["stock_inicial"])
+    m1, m2 = st.columns(2)
+    m1.metric("Stock actual", f"{stock_actual} {item['unidad']}")
+    m2.metric("Vencimiento", etiqueta_vencimiento(lote["fecha_vencimiento"]))
+
+    eventos = []
+    eventos.append({
+        "fecha": lote.get("creado") or "", "tipo": "🆕 Alta del lote",
+        "detalle": f"Dado de alta por {lote.get('creado_por') or '—'} · stock inicial: {lote['stock_inicial']:g} {item['unidad']}",
+    })
+    for m in get_movimientos(item_id=item["id"]):
+        if m.get("lote_id") != lote["id"]:
+            continue
+        etiqueta_tipo = TIPO_MOV_LABEL.get(m["tipo"], m["tipo"])
+        detalle = f"{m.get('analista') or '—'} · {abs(m['cantidad']):g} {item['unidad']}"
+        if m.get("nota"):
+            detalle += f" · {m['nota']}"
+        if m.get("anulado"):
+            etiqueta_tipo += " (ANULADO)"
+        eventos.append({"fecha": m["fecha"], "tipo": etiqueta_tipo, "detalle": detalle})
+    for c in get_cambios("lotes", lote["id"]):
+        eventos.append({
+            "fecha": c["fecha"], "tipo": "✏️ Edición",
+            "detalle": f"{c.get('analista') or '—'} · {c['campo']}: \"{c.get('valor_anterior') or '—'}\" → \"{c.get('valor_nuevo') or '—'}\"",
+        })
+    for c in get_cambios("items", item["id"]):
+        eventos.append({
+            "fecha": c["fecha"], "tipo": "✏️ Edición del ítem",
+            "detalle": f"{c.get('analista') or '—'} · {c['campo']}: \"{c.get('valor_anterior') or '—'}\" → \"{c.get('valor_nuevo') or '—'}\"",
+        })
+
+    eventos.sort(key=lambda e: e["fecha"], reverse=True)
+    st.caption(f"{len(eventos)} evento{'s' if len(eventos) != 1 else ''} en la historia de este lote.")
+    for e in eventos:
+        with st.container(border=True):
+            st.markdown(f"**{e['tipo']}**")
+            fecha_fmt = e["fecha"][:16].replace("T", " ") if e["fecha"] else "—"
+            st.caption(f"{fecha_fmt} · {e['detalle']}")
+
+
+def render_qr_codigos():
+    st.caption(
+        "Generá los códigos QR para imprimir y pegar en el laboratorio — uno por línea de gas "
+        "(para cambiar el tubo rápido) y uno para usar Solventes/Consumibles directo. "
+        "Pegá la URL de la app para que apunten bien."
+    )
+    url_guardada = st.session_state.get("qr_url_base", "")
+    url_input = st.text_input(
+        "URL de la app", value=url_guardada,
+        placeholder="https://tu-app.share.connect.posit.cloud",
+        key="qr_url_base_input",
+    )
+    if url_input.strip():
+        st.session_state.qr_url_base = url_input.strip().rstrip("/")
+    url_base = st.session_state.get("qr_url_base", "").rstrip("/")
+    if not url_base:
+        st.info("Pegá arriba la URL con la que entrás a la app, para poder armar los códigos.")
+        return
+
+    import qrcode
+    from io import BytesIO
+
+    def _generar_qr_png(url):
+        img = qrcode.make(url, box_size=8, border=2)
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    entradas = [("🏠 App general", url_base)]
+    familias_activas = {f["id"] for f in get_familias() if f["activo"]}
+    if "solventes" in familias_activas:
+        entradas.append(("📲 Usar Solventes", f"{url_base}/?familia=solventes&ir=usar"))
+    if "cromato" in familias_activas:
+        entradas.append(("📲 Usar Consumibles", f"{url_base}/?familia=cromato&ir=usar"))
+    if gases_habilitado():
+        import datos_gases as dg
+        for linea in dg.get_lineas():
+            entradas.append((f"🛢️ Cabina — {linea['nombre']}", f"{url_base}/?linea={linea['id']}"))
+
+    cols = st.columns(3)
+    for idx, (nombre, url) in enumerate(entradas):
+        with cols[idx % 3]:
+            st.markdown(f"**{nombre}**")
+            png_bytes = _generar_qr_png(url)
+            st.image(png_bytes, use_container_width=True)
+            st.download_button(
+                "⬇️ Descargar", data=png_bytes,
+                file_name=f"qr_{nombre.split(' ', 1)[-1].lower().replace(' ', '_')}.png",
+                mime="image/png", key=f"dl_qr_{idx}",
+            )
+            st.caption(url)
 
 
 def render_movimientos(familia_id):

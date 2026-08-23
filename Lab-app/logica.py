@@ -99,6 +99,18 @@ def estado(stock, minimo):
     return "🟢 OK"
 
 
+def color_estado_lote(stock, minimo, fecha_vencimiento):
+    """Color de borde combinando stock y vencimiento — gana el peor caso
+    (rojo > ámbar > verde). Se usa para pintar las tarjetas de lote de un
+    vistazo, sin tener que leer el texto."""
+    dias = dias_para_vencer(fecha_vencimiento)
+    if stock <= 0 or (dias is not None and dias < 0):
+        return "#A6362B"
+    if stock <= minimo or (dias is not None and dias <= 60):
+        return "#C97A2B"
+    return "#2E7D32"
+
+
 def _color_estado(val):
     """Para usar con pandas Styler: pinta la celda según su texto (estado de stock o urgencia de compra)."""
     texto = str(val)

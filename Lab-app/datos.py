@@ -139,21 +139,60 @@ def eliminar_item(item_id):
     sb.table("items").delete().eq("id", item_id).execute()
 
 
-def update_item(item_id, **campos):
+def _registrar_cambios(tabla, registro_id, anterior, nuevo, analista):
+    """Compara los campos de 'anterior' contra 'nuevo' y guarda un registro
+    por cada campo que haya cambiado — así no se pierde el valor viejo
+    cuando alguien edita un ítem o un lote."""
+    sb = get_client()
+    filas = []
+    for campo, valor_nuevo in nuevo.items():
+        valor_anterior = anterior.get(campo)
+        if str(valor_anterior) != str(valor_nuevo):
+            filas.append({
+                "id": str(uuid.uuid4()), "tabla": tabla, "registro_id": registro_id,
+                "campo": campo,
+                "valor_anterior": str(valor_anterior) if valor_anterior is not None else None,
+                "valor_nuevo": str(valor_nuevo) if valor_nuevo is not None else None,
+                "analista": analista, "fecha": datetime.now().isoformat(),
+            })
+    if filas:
+        sb.table("cambios").insert(filas).execute()
+
+
+def get_cambios(tabla, registro_id):
+    """Historial de cambios (ediciones) de un ítem o lote en particular."""
+    sb = get_client()
+    return (
+        sb.table("cambios").select("*")
+        .eq("tabla", tabla).eq("registro_id", registro_id)
+        .order("fecha", desc=True).execute().data
+    )
+
+
+def update_item(item_id, analista=None, **campos):
     """Actualiza cualquier combinación de campos del ítem (nombre, unidad,
-    stock_minimo, cas, riesgos...). 'riesgos' puede pasarse como lista."""
+    stock_minimo, cas, riesgos...). 'riesgos' puede pasarse como lista.
+    Si se pasa 'analista', se registra qué campos cambiaron y a qué valor,
+    para no perder el dato anterior."""
     if "riesgos" in campos and isinstance(campos["riesgos"], list):
         campos["riesgos"] = ",".join(campos["riesgos"]) if campos["riesgos"] else None
     sb = get_client()
+    if analista:
+        actual = sb.table("items").select("*").eq("id", item_id).execute().data
+        _registrar_cambios("items", item_id, actual[0] if actual else {}, campos, analista)
     sb.table("items").update(campos).eq("id", item_id).execute()
 
 
-def update_lote(lote_id, **campos):
+def update_lote(lote_id, analista=None, **campos):
     """Actualiza los datos descriptivos de un lote (marca, lote, envase,
     ubicación, catálogo, SDS, vencimiento). A propósito NO se usa para tocar
     stock_inicial ni cantidades — eso pasa siempre por un movimiento real
-    (Chequeo, Usar, Cargar), para no perder trazabilidad."""
+    (Chequeo, Usar, Cargar), para no perder trazabilidad.
+    Si se pasa 'analista', se registra qué campos cambiaron."""
     sb = get_client()
+    if analista:
+        actual = sb.table("lotes").select("*").eq("id", lote_id).execute().data
+        _registrar_cambios("lotes", lote_id, actual[0] if actual else {}, campos, analista)
     sb.table("lotes").update(campos).eq("id", lote_id).execute()
 
 
@@ -354,3 +393,28 @@ def toggle_persona(pid, activo):
 def delete_persona(pid):
     sb = get_client()
     sb.table("personas").delete().eq("id", pid).execute()
+
+
+def get_secciones_ocultas(persona_nombre):
+    """Qué secciones tiene ocultas esta persona, por módulo — devuelve un
+    dict {modulo: [ids_de_secciones_ocultas]}. Vacío si nunca personalizó nada."""
+    import json
+    sb = get_client()
+    res = sb.table("personas").select("secciones_ocultas").eq("nombre", persona_nombre).execute().data
+    if not res or not res[0].get("secciones_ocultas"):
+        return {}
+    try:
+        return json.loads(res[0]["secciones_ocultas"])
+    except (ValueError, TypeError):
+        return {}
+
+
+def set_secciones_ocultas(persona_nombre, modulo, secciones_ids):
+    """Guarda qué secciones decidió ocultar esta persona, para un módulo en
+    particular (ej: 'solventes', 'cromato', 'gases') — sin afectar lo que
+    otras personas ven."""
+    import json
+    actual = get_secciones_ocultas(persona_nombre)
+    actual[modulo] = secciones_ids
+    sb = get_client()
+    sb.table("personas").update({"secciones_ocultas": json.dumps(actual)}).eq("nombre", persona_nombre).execute()

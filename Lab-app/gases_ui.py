@@ -10,6 +10,7 @@ import plotly.express as px
 import streamlit as st
 
 import datos_gases as dg
+from datos import get_secciones_ocultas, set_secciones_ocultas
 from datos_gases import GASES
 from ui_helpers import titulo_seccion, subtitulo_con_icono, fila_dos_lados, _buscar_imagen, _img_datauri
 
@@ -169,19 +170,37 @@ def _render_inicio():
                 st.rerun()
 
     st.divider()
-    b1, b2, b3, b4 = st.columns(4)
-    if b1.button("🛢️ Cilindros", use_container_width=True):
-        st.session_state.gases_seccion = "cilindros"
-        st.rerun()
-    if b2.button("📋 Historial", use_container_width=True):
-        st.session_state.gases_seccion = "historial"
-        st.rerun()
-    if b3.button("🔍 Buscar circuito", use_container_width=True):
-        st.session_state.gases_seccion = "buscar"
-        st.rerun()
-    if b4.button("📊 Gráficos", use_container_width=True):
-        st.session_state.gases_seccion = "graficos"
-        st.rerun()
+    persona_actual = st.session_state.analista_actual
+    ocultas_todas = get_secciones_ocultas(persona_actual)
+    ocultas_gases = ocultas_todas.get("gases", [])
+    secciones_gases = [
+        ("cilindros", "🛢️ Cilindros"),
+        ("historial", "📋 Historial"),
+        ("buscar", "🔍 Buscar circuito"),
+        ("graficos", "📊 Gráficos"),
+    ]
+    visibles = [s for s in secciones_gases if s[0] not in ocultas_gases]
+    if visibles:
+        cols_menu = st.columns(len(visibles))
+        for col, (sid, label) in zip(cols_menu, visibles):
+            if col.button(label, use_container_width=True, key=f"gases_menu_{sid}"):
+                st.session_state.gases_seccion = sid
+                st.rerun()
+    else:
+        st.info("Ocultaste todas las secciones acá. Usá \"⚙️ Personalizar\" abajo para volver a mostrar alguna.")
+
+    with st.expander("⚙️ Personalizar qué ver acá"):
+        st.caption("Ocultá lo que no usás en Gases — podés volver a mostrarlo cuando quieras.")
+        elegidas = st.multiselect(
+            "Secciones visibles", options=[s[0] for s in secciones_gases],
+            default=[s[0] for s in secciones_gases if s[0] not in ocultas_gases],
+            format_func=lambda sid: next(s[1] for s in secciones_gases if s[0] == sid),
+            key="personalizar_gases",
+        )
+        if st.button("Guardar", key="personalizar_gases_guardar"):
+            nuevas_ocultas = [s[0] for s in secciones_gases if s[0] not in elegidas]
+            set_secciones_ocultas(persona_actual, "gases", nuevas_ocultas)
+            st.rerun()
 
 
 def _render_gestionar_linea(linea_id):
