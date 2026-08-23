@@ -1354,34 +1354,63 @@ def render_qr_codigos():
 
     import qrcode
     from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas as pdf_canvas
+    from reportlab.lib.units import cm
+    from reportlab.lib.utils import ImageReader
 
     def _generar_qr_png(url):
         img = qrcode.make(url, box_size=8, border=2)
         buf = BytesIO()
         img.save(buf, format="PNG")
-        return buf.getvalue()
+        buf.seek(0)
+        return buf
 
-    entradas = [("🏠 App general", url_base)]
+    def _generar_qr_pdf(titulo, url):
+        """Una hoja A4 con el título grande arriba y el QR centrado abajo —
+        lista para imprimir y pegar directo, sin recortar nada."""
+        img_buf = _generar_qr_png(url)
+        pdf_buf = BytesIO()
+        c = pdf_canvas.Canvas(pdf_buf, pagesize=A4)
+        ancho, alto = A4
+
+        c.setFont("Helvetica-Bold", 30)
+        c.drawCentredString(ancho / 2, alto - 5 * cm, titulo)
+
+        tamano_qr = 11 * cm
+        x = (ancho - tamano_qr) / 2
+        y = (alto - tamano_qr) / 2
+        c.drawImage(ImageReader(img_buf), x, y, width=tamano_qr, height=tamano_qr)
+
+        c.setFont("Helvetica", 9)
+        c.drawCentredString(ancho / 2, y - 1 * cm, url)
+
+        c.save()
+        pdf_buf.seek(0)
+        return pdf_buf.getvalue()
+
+    entradas = [("🏠 App general", "App general", url_base)]
     familias_activas = {f["id"] for f in get_familias() if f["activo"]}
     if "solventes" in familias_activas:
-        entradas.append(("📲 Usar Solventes", f"{url_base}/?familia=solventes&ir=usar"))
+        entradas.append(("📲 Usar Solventes", "Usar Solventes", f"{url_base}/?familia=solventes&ir=usar"))
     if "cromato" in familias_activas:
-        entradas.append(("📲 Usar Consumibles", f"{url_base}/?familia=cromato&ir=usar"))
+        entradas.append(("📲 Usar Consumibles", "Usar Consumibles", f"{url_base}/?familia=cromato&ir=usar"))
     if gases_habilitado():
         import datos_gases as dg
         for linea in dg.get_lineas():
-            entradas.append((f"🛢️ Cabina — {linea['nombre']}", f"{url_base}/?linea={linea['id']}"))
+            entradas.append((f"🛢️ Cabina — {linea['nombre']}", linea["nombre"], f"{url_base}/?linea={linea['id']}"))
 
     cols = st.columns(3)
-    for idx, (nombre, url) in enumerate(entradas):
+    for idx, (nombre_display, titulo_pdf, url) in enumerate(entradas):
         with cols[idx % 3]:
-            st.markdown(f"**{nombre}**")
-            png_bytes = _generar_qr_png(url)
-            st.image(png_bytes, use_container_width=True)
+            st.markdown(f"**{nombre_display}**")
+            png_buf = _generar_qr_png(url)
+            st.image(png_buf, use_container_width=True)
+            pdf_bytes = _generar_qr_pdf(titulo_pdf, url)
             st.download_button(
-                "⬇️ Descargar", data=png_bytes,
-                file_name=f"qr_{nombre.split(' ', 1)[-1].lower().replace(' ', '_')}.png",
-                mime="image/png", key=f"dl_qr_{idx}",
+                "⬇️ Descargar PDF", data=pdf_bytes,
+                file_name=f"qr_{titulo_pdf.lower().replace(' ', '_')}.pdf",
+                mime="application/pdf", key=f"dl_qr_{idx}",
             )
             st.caption(url)
 
