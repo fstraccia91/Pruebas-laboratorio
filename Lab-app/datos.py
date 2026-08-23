@@ -395,6 +395,44 @@ def delete_persona(pid):
     sb.table("personas").delete().eq("id", pid).execute()
 
 
+def get_modulos_habilitados(persona_nombre):
+    """Módulos a los que esta persona tiene acceso — None significa 'todos,
+    sin restricción' (el comportamiento por defecto). No se usa todavía
+    para bloquear nada, es solo la preparación para hacerlo a futuro."""
+    sb = get_client()
+    res = sb.table("personas").select("modulos_habilitados").eq("nombre", persona_nombre).execute().data
+    if not res or not res[0].get("modulos_habilitados"):
+        return None
+    return res[0]["modulos_habilitados"].split(",")
+
+
+def set_modulos_habilitados(persona_nombre, modulos_ids):
+    """Guarda a qué módulos tiene acceso esta persona. Pasar None o una
+    lista vacía la deja sin restricción (acceso a todo)."""
+    sb = get_client()
+    valor = ",".join(modulos_ids) if modulos_ids else None
+    sb.table("personas").update({"modulos_habilitados": valor}).eq("nombre", persona_nombre).execute()
+
+
+def get_acciones_habilitadas(persona_nombre):
+    """Igual que get_modulos_habilitados, pero para acciones sensibles
+    puntuales (eliminar, anular, editar, gestionar personas...) — más fino
+    que el permiso por módulo. None = sin restricción."""
+    sb = get_client()
+    res = sb.table("personas").select("acciones_habilitadas").eq("nombre", persona_nombre).execute().data
+    if not res or not res[0].get("acciones_habilitadas"):
+        return None
+    return res[0]["acciones_habilitadas"].split(",")
+
+
+def set_acciones_habilitadas(persona_nombre, acciones_ids):
+    """Guarda qué acciones sensibles puede hacer esta persona. Pasar None o
+    una lista vacía la deja sin restricción (puede hacer todo)."""
+    sb = get_client()
+    valor = ",".join(acciones_ids) if acciones_ids else None
+    sb.table("personas").update({"acciones_habilitadas": valor}).eq("nombre", persona_nombre).execute()
+
+
 def get_secciones_ocultas(persona_nombre):
     """Qué secciones tiene ocultas esta persona, por módulo — devuelve un
     dict {modulo: [ids_de_secciones_ocultas]}. Vacío si nunca personalizó nada."""

@@ -33,7 +33,8 @@ from datos import (
     daily_consumption, stock_series, add_item, add_lote, get_envases, add_movimiento,
     get_personas, add_persona, toggle_persona, delete_persona, get_catalogo, add_catalogo_entry,
     get_favoritos_ids, toggle_favorito, conteo_usos_recientes, get_cambios,
-    get_secciones_ocultas, set_secciones_ocultas,
+    get_secciones_ocultas, set_secciones_ocultas, get_modulos_habilitados, set_modulos_habilitados,
+    get_acciones_habilitadas, set_acciones_habilitadas,
 )
 from logica import (
     NOMBRE_LABORATORIO, SUBTITULO_LABORATORIO, NOMBRE_SOFTWARE, VERSION_SOFTWARE,
@@ -343,7 +344,7 @@ if not st.session_state.ir_aplicado:
     _linea_param = st.query_params.get("linea")
     _ir = st.query_params.get("ir")
     _secciones_top = {"usar", "chequear", "stock"}
-    _secciones_labo = {"movimientos", "compras", "graficos", "personas", "buscar"}
+    _secciones_labo = {"movimientos", "compras", "graficos", "buscar"}
 
     if _linea_param:
         # QR pegado en una cabina de gas: entra directo a esa línea.
@@ -443,6 +444,9 @@ def render_home():
                 st.session_state.familia_id = "__gases__"
                 st.rerun()
 
+    with st.expander("👥 Personas"):
+        render_personas_global()
+
     with st.expander("🏷️ Códigos QR para imprimir"):
         render_qr_codigos()
 
@@ -491,7 +495,6 @@ def render_familia(familia_id):
         ("movimientos", "📋", "Movimientos"),
         ("compras", "🛒", "Compras"),
         ("graficos", "📊", "Gráficos"),
-        ("personas", "👥", "Personas"),
         ("buscar", "🔎", "Buscar historial"),
     ]
     renderers = {
@@ -501,7 +504,6 @@ def render_familia(familia_id):
         "movimientos": lambda: render_movimientos(familia_id),
         "compras": lambda: render_compras(familia_id),
         "graficos": lambda: render_graficos(familia_id),
-        "personas": lambda: render_personas(),
         "buscar": lambda: render_buscar_historial(familia_id),
     }
 
@@ -1573,8 +1575,25 @@ def render_compras(familia_id):
         st.caption("Esta lista no incluye pedidos ya en camino: es una sugerencia según stock y consumo, no una orden de compra.")
 
 
-def render_personas():
-    st.caption("Analistas que pueden cargar movimientos. Los inactivos no aparecen en 'Cargar', pero se conservan en el historial.")
+ACCIONES_SENSIBLES = [
+    ("eliminar_item", "Eliminar ítems"),
+    ("eliminar_lote", "Eliminar lotes"),
+    ("anular_movimiento", "Anular movimientos"),
+    ("editar_item", "Editar ítems"),
+    ("editar_lote", "Editar lotes"),
+    ("gestionar_personas", "Gestionar personas y permisos"),
+    ("retirar_cilindro", "Retirar cilindros de gas definitivamente"),
+    ("corregir_estado_cilindro", "Corregir estado de un cilindro"),
+    ("anular_movimiento_gas", "Anular movimientos de gases"),
+]
+
+
+def render_personas_global():
+    st.caption(
+        "Lista global de analistas que pueden usar la app — es la misma lista que ves "
+        "al elegir tu nombre para entrar. Los inactivos no aparecen para elegir, pero "
+        "se conservan en el historial."
+    )
     c1, c2 = st.columns([3, 1])
     nombre = c1.text_input("Nombre del analista", key="new_persona")
     c2.write("")
@@ -1583,15 +1602,58 @@ def render_personas():
             add_persona(nombre.strip())
             st.rerun()
 
+    modulos_disponibles = [(f["id"], f["nombre"]) for f in get_familias() if f["activo"]]
+    if gases_habilitado():
+        modulos_disponibles.append(("__gases__", "Gases Cromatográficos"))
+
+    st.divider()
     for p in get_personas():
-        c1, c2, c3 = st.columns([3, 1, 1])
-        c1.write(("🟢 " if p["activo"] else "⚪ ") + p["nombre"])
-        if c2.button("Desactivar" if p["activo"] else "Reactivar", key=f"toggle_{p['id']}"):
-            toggle_persona(p["id"], p["activo"])
-            st.rerun()
-        if c3.button("Eliminar", key=f"del_{p['id']}"):
-            delete_persona(p["id"])
-            st.rerun()
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([3, 1, 1])
+            c1.write(("🟢 " if p["activo"] else "⚪ ") + p["nombre"])
+            if c2.button("Desactivar" if p["activo"] else "Reactivar", key=f"toggle_{p['id']}"):
+                toggle_persona(p["id"], p["activo"])
+                st.rerun()
+            if c3.button("Eliminar", key=f"del_{p['id']}"):
+                delete_persona(p["id"])
+                st.rerun()
+
+            if modulos_disponibles:
+                with st.expander(f"Módulos habilitados para {p['nombre']}"):
+                    st.caption(
+                        "Por ahora esto solo se guarda, no bloquea nada todavía — "
+                        "cualquiera puede seguir usando cualquier módulo sin importar lo que elijas acá."
+                    )
+                    actuales = get_modulos_habilitados(p["nombre"])
+                    ids_disponibles = [m[0] for m in modulos_disponibles]
+                    default_sel = ids_disponibles if actuales is None else [m for m in actuales if m in ids_disponibles]
+                    elegidos = st.multiselect(
+                        "Módulos", options=ids_disponibles, default=default_sel,
+                        format_func=lambda mid: next(m[1] for m in modulos_disponibles if m[0] == mid),
+                        key=f"modulos_persona_{p['id']}",
+                    )
+                    if st.button("Guardar", key=f"guardar_modulos_{p['id']}"):
+                        nuevo_valor = None if len(elegidos) == len(ids_disponibles) else elegidos
+                        set_modulos_habilitados(p["nombre"], nuevo_valor)
+                        st.rerun()
+
+            with st.expander(f"Acciones habilitadas para {p['nombre']}"):
+                st.caption(
+                    "Igual de preparación: qué puede hacer dentro de los módulos (eliminar, "
+                    "anular, editar, gestionar personas). Todavía no bloquea nada."
+                )
+                acciones_actuales = get_acciones_habilitadas(p["nombre"])
+                ids_acciones = [a[0] for a in ACCIONES_SENSIBLES]
+                default_acciones = ids_acciones if acciones_actuales is None else [a for a in acciones_actuales if a in ids_acciones]
+                elegidas_acciones = st.multiselect(
+                    "Acciones", options=ids_acciones, default=default_acciones,
+                    format_func=lambda aid: next(a[1] for a in ACCIONES_SENSIBLES if a[0] == aid),
+                    key=f"acciones_persona_{p['id']}",
+                )
+                if st.button("Guardar", key=f"guardar_acciones_{p['id']}"):
+                    nuevo_valor_acciones = None if len(elegidas_acciones) == len(ids_acciones) else elegidas_acciones
+                    set_acciones_habilitadas(p["nombre"], nuevo_valor_acciones)
+                    st.rerun()
 
 
 if st.session_state.familia_id is None:
