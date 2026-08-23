@@ -5,6 +5,8 @@ compartidas con el resto de la app), para verse consistente sin duplicar
 código. Se llama desde app.py.
 """
 
+import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 import datos_gases as dg
@@ -30,6 +32,17 @@ TIPO_LABEL = {
     "retirado": ("🚫 Retirado", "Retirado por"),
     "correccion": ("🔧 Corrección", "Corregido por"),
     "remito_actualizado": ("🧾 Remito actualizado", "Actualizado por"),
+}
+
+COLOR_TIPO = {
+    "nuevo_ingreso": "#5C6B67",
+    "conectado": "#2E7D32",
+    "desconectado": "#8A8A8A",
+    "enviado_a_rellenar": "#C97A2B",
+    "recibido_de_relleno": "#1565C0",
+    "retirado": "#A6362B",
+    "correccion": "#8E24AA",
+    "remito_actualizado": "#1565C0",
 }
 
 
@@ -91,6 +104,8 @@ def render_gases():
         _render_historial()
     elif st.session_state.gases_seccion == "buscar":
         _render_buscar_circuito()
+    elif st.session_state.gases_seccion == "graficos":
+        _render_graficos()
     else:
         _render_inicio()
 
@@ -124,7 +139,7 @@ def _render_inicio():
                     st.rerun()
 
     st.divider()
-    b1, b2, b3 = st.columns(3)
+    b1, b2, b3, b4 = st.columns(4)
     if b1.button("🛢️ Cilindros", use_container_width=True):
         st.session_state.gases_seccion = "cilindros"
         st.rerun()
@@ -133,6 +148,9 @@ def _render_inicio():
         st.rerun()
     if b3.button("🔍 Buscar circuito", use_container_width=True):
         st.session_state.gases_seccion = "buscar"
+        st.rerun()
+    if b4.button("📊 Gráficos", use_container_width=True):
+        st.session_state.gases_seccion = "graficos"
         st.rerun()
 
 
@@ -450,6 +468,68 @@ def _render_historial():
                     st.rerun()
 
 
+def _tarjeta_movimiento(m, lineas_por_id, cilindro_id):
+    """Una tarjeta de movimiento con color según el tipo, y el remito
+    correspondiente — el propio si lo tiene (envío/recepción), o si no, el
+    que estaba vigente en ese momento (para Conectado/Desconectado, que
+    quedan 'sanguchados' entre un Recibido y el Enviado siguiente)."""
+    linea = lineas_por_id.get(m.get("linea_id"))
+    titulo_tipo, quien_label = TIPO_LABEL.get(m["tipo"], (m["tipo"], "Hecho por"))
+    color = COLOR_TIPO.get(m["tipo"], "#5C6B67")
+
+    remito_mostrar = m.get("remito_envio") or m.get("remito_recepcion")
+    etiqueta_remito = "Remito"
+    if m.get("remito_envio"):
+        etiqueta_remito = "Remito de devolución"
+    if not remito_mostrar:
+        remito_mostrar = dg.remito_vigente_en(cilindro_id, m["fecha"])
+
+    detalle = f"{quien_label}: {m.get('analista') or '—'} · {m['fecha'][:16].replace('T', ' ')}"
+    if linea:
+        detalle += f" · {linea['nombre']}"
+
+    partes_html = [f"<div style='font-weight:600;'>{titulo_tipo}</div>"]
+    partes_html.append(f"<div style='color:#5C6B67; font-size:0.85rem;'>{detalle}</div>")
+    if m.get("nota"):
+        partes_html.append(f"<div style='color:#5C6B67; font-size:0.8rem; margin-top:2px;'>Nota: {m['nota']}</div>")
+    if remito_mostrar:
+        partes_html.append(f"<div style='color:#5C6B67; font-size:0.8rem; margin-top:2px;'>🧾 {etiqueta_remito}: {remito_mostrar}</div>")
+
+    st.markdown(
+        f"""
+        <div style='border-left:4px solid {color}; border-radius:4px; padding:8px 12px;
+                     margin-bottom:8px; background:#FAFAFA;'>
+            {"".join(partes_html)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _resumen_movimientos(movimientos_visibles):
+    """Línea de resumen tipo '3 conexiones · 2 envíos a rellenar · último
+    movimiento hace 2 días', arriba de la lista completa."""
+    orden_tipos = [
+        "conectado", "desconectado", "recibido_de_relleno", "enviado_a_rellenar",
+        "nuevo_ingreso", "retirado", "correccion", "remito_actualizado",
+    ]
+    conteo = {}
+    for m in movimientos_visibles:
+        conteo[m["tipo"]] = conteo.get(m["tipo"], 0) + 1
+    partes = []
+    for t in orden_tipos:
+        if conteo.get(t):
+            nombre_corto = TIPO_LABEL.get(t, (t, ""))[0].split(" ", 1)[-1].lower()
+            partes.append(f"{conteo[t]} {nombre_corto}")
+    resumen = " · ".join(partes)
+    fechas = [m["fecha"] for m in movimientos_visibles]
+    if fechas:
+        dias = dg._dias_desde(max(fechas))
+        if dias is not None:
+            resumen += f" · último movimiento hace {dias} día{'s' if dias != 1 else ''}"
+    st.caption(resumen)
+
+
 def _render_buscar_circuito():
     st.caption(
         "Buscá con lo que tengas — cada campo es opcional y va acotando: "
@@ -476,28 +556,98 @@ def _render_buscar_circuito():
 
     lineas_por_id = {l["id"]: l for l in dg.get_lineas()}
     st.caption(f"{len(resultados)} cilindro{'s' if len(resultados) != 1 else ''} encontrado{'s' if len(resultados) != 1 else ''}.")
+
     for cilindro, movimientos, acotado_por_remito in resultados:
-        st.markdown(f"### {_etiqueta_cilindro(cilindro)}")
         movimientos_visibles = [m for m in movimientos if not m.get("anulado")]
+
         if acotado_por_remito:
-            st.caption(f"Remito buscado: {remito.strip()} — {len(movimientos_visibles)} movimiento{'s' if len(movimientos_visibles) != 1 else ''} en esta carga.")
+            st.markdown(f"### {_etiqueta_cilindro(cilindro)} · 🧾 Remito {remito.strip()}")
         else:
-            st.caption(f"Historial completo — {len(movimientos_visibles)} movimiento{'s' if len(movimientos_visibles) != 1 else ''}.")
+            st.markdown(f"### {_etiqueta_cilindro(cilindro)}")
+
         if not movimientos_visibles:
             st.caption("Sin movimientos para mostrar.")
-        for m in movimientos_visibles:
-            linea = lineas_por_id.get(m.get("linea_id"))
-            titulo_tipo, quien_label = TIPO_LABEL.get(m["tipo"], (m["tipo"], "Hecho por"))
-            with st.container(border=True):
-                st.markdown(f"**{titulo_tipo}**")
-                detalle = f"{quien_label}: {m.get('analista') or '—'} · {m['fecha'][:16].replace('T', ' ')}"
-                if linea:
-                    detalle += f" · {linea['nombre']}"
-                st.caption(detalle)
-                if m.get("nota"):
-                    st.caption(f"Nota: {m['nota']}")
-                if m.get("remito_envio"):
-                    st.caption(f"🧾 Remito de devolución: {m['remito_envio']}")
-                if m.get("remito_recepcion"):
-                    st.caption(f"🧾 Remito: {m['remito_recepcion']}")
+            st.divider()
+            continue
+
+        _resumen_movimientos(movimientos_visibles)
+
+        if acotado_por_remito:
+            # Ya viene en orden cronológico (más viejo primero) — se lee como una historia.
+            for m in movimientos_visibles:
+                _tarjeta_movimiento(m, lineas_por_id, cilindro["id"])
+        else:
+            # Historial completo: agrupar por ciclo, el más reciente primero.
+            movimientos_asc = sorted(movimientos_visibles, key=lambda m: m["fecha"])
+            ciclos = dg.segmentar_por_ciclos(movimientos_asc)
+            for remito_ciclo, movs_ciclo in reversed(ciclos):
+                dias = dg._dias_desde(movs_ciclo[0]["fecha"])
+                etiqueta = f"🧾 Remito {remito_ciclo}" if remito_ciclo else "Antes del primer remito"
+                titulo_ciclo = f"{etiqueta} · {len(movs_ciclo)} movimiento{'s' if len(movs_ciclo) != 1 else ''}"
+                if dias is not None:
+                    titulo_ciclo += f" · hace {dias} día{'s' if dias != 1 else ''}"
+                with st.expander(titulo_ciclo):
+                    for m in movs_ciclo:
+                        _tarjeta_movimiento(m, lineas_por_id, cilindro["id"])
+
+        st.divider()
+
+
+def _render_graficos():
+    st.caption("Duración de los cilindros — pensado para ver de un vistazo cómo vienen rindiendo.")
+
+    gas_sel = st.selectbox("Gas", ["Todos"] + GASES, key="graf_gas")
+    gas_filtro = None if gas_sel == "Todos" else gas_sel
+
+    st.markdown("#### 🔌 Duración conectado, en el tiempo")
+    st.caption("Cuánto duró cada carga desde que se conectó hasta que se desconectó (vacía). Cada punto es una conexión.")
+    datos_conexion = dg.duraciones_conexion(gas=gas_filtro)
+    if not datos_conexion:
+        st.info("Todavía no hay ciclos completos (conectado → desconectado) para graficar.")
+    else:
+        df_conexion = pd.DataFrame(datos_conexion)
+        df_conexion["fecha_inicio"] = pd.to_datetime(df_conexion["fecha_inicio"])
+        fig1 = px.scatter(
+            df_conexion, x="fecha_inicio", y="dias", color="gas",
+            hover_data=["identificacion"],
+            labels={"fecha_inicio": "Fecha de conexión", "dias": "Días conectado", "gas": "Gas"},
+            title="Duración de cada conexión, en el tiempo",
+        )
+        st.plotly_chart(fig1, use_container_width=True)
+
+    st.divider()
+    st.markdown("#### 🛢️ Comparar cilindros entre sí")
+    st.caption("Duración promedio por cilindro individual (mismo gas) — para detectar si alguno rinde menos que el resto.")
+    if not gas_filtro:
+        st.info("Elegí un gas arriba para comparar sus cilindros entre sí.")
+    elif not datos_conexion:
+        st.info("Todavía no hay datos para este gas.")
+    else:
+        df_cmp = pd.DataFrame(datos_conexion)
+        promedio_por_cilindro = df_cmp.groupby("identificacion")["dias"].mean().reset_index()
+        promedio_por_cilindro.columns = ["Cilindro", "Promedio de días conectado"]
+        promedio_por_cilindro = promedio_por_cilindro.sort_values("Promedio de días conectado", ascending=False)
+        fig2 = px.bar(
+            promedio_por_cilindro, x="Cilindro", y="Promedio de días conectado",
+            title=f"Duración promedio por cilindro — {gas_filtro}",
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+    st.divider()
+    st.markdown("#### 🔄 Tiempo que tarda el proveedor")
+    st.caption("Días entre 'Enviado a rellenar' y 'Recibido de relleno', por gas.")
+    datos_relleno = dg.duraciones_relleno(gas=gas_filtro)
+    if not datos_relleno:
+        st.info("Todavía no hay ciclos completos (enviado → recibido) para graficar.")
+    else:
+        df_relleno = pd.DataFrame(datos_relleno)
+        promedio_por_gas = df_relleno.groupby("gas")["dias"].mean().reset_index()
+        promedio_por_gas.columns = ["Gas", "Promedio de días en el proveedor"]
+        fig3 = px.bar(
+            promedio_por_gas, x="Gas", y="Promedio de días en el proveedor",
+            title="Tiempo promedio de devolución del proveedor, por gas",
+        )
+        st.plotly_chart(fig3, use_container_width=True)
+
+
 

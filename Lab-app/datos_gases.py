@@ -281,6 +281,79 @@ def buscar_flexible(gas=None, id_interno=None, remito=None):
     return resultados
 
 
+def segmentar_por_ciclos(movimientos_asc):
+    """Recibe los movimientos de UN cilindro, ya ordenados de más viejo a
+    más nuevo, y los agrupa en ciclos: cada ciclo arranca en un
+    'recibido_de_relleno'/'remito_actualizado' y termina justo antes del
+    siguiente. Lo que pasó antes del primer remito (el alta) queda como un
+    ciclo aparte, sin remito. Devuelve [(remito_o_None, [movimientos]), ...]."""
+    tipos_inicio = {"recibido_de_relleno", "remito_actualizado"}
+    ciclos = []
+    remito_actual = None
+    movs_actual = []
+    for m in movimientos_asc:
+        if m["tipo"] in tipos_inicio and not m.get("anulado"):
+            if movs_actual:
+                ciclos.append((remito_actual, movs_actual))
+            remito_actual = m.get("remito_recepcion")
+            movs_actual = [m]
+        else:
+            movs_actual.append(m)
+    if movs_actual:
+        ciclos.append((remito_actual, movs_actual))
+    return ciclos
+
+
+def duraciones_conexion(gas=None):
+    """Para cada par 'conectado' → 'desconectado' consecutivo (del mismo
+    cilindro), cuántos días estuvo conectado y cuándo arrancó. Sirve para
+    graficar el rendimiento de los tubos en el tiempo, por gas o comparando
+    cilindros individuales entre sí."""
+    cilindros = get_cilindros(gas=gas) if gas else get_cilindros()
+    resultado = []
+    for c in cilindros:
+        hist = sorted(get_historial(cilindro_id=c["id"], limite=500), key=lambda h: h["fecha"])
+        inicio = None
+        for h in hist:
+            if h.get("anulado"):
+                continue
+            if h["tipo"] == "conectado":
+                inicio = h["fecha"]
+            elif h["tipo"] == "desconectado" and inicio:
+                dias = (datetime.fromisoformat(h["fecha"]) - datetime.fromisoformat(inicio)).total_seconds() / 86400
+                resultado.append({
+                    "cilindro_id": c["id"], "gas": c["gas"],
+                    "identificacion": c.get("id_interno") or c.get("proveedor") or "—",
+                    "fecha_inicio": inicio, "dias": round(dias, 1),
+                })
+                inicio = None
+    return resultado
+
+
+def duraciones_relleno(gas=None):
+    """Para cada par 'enviado_a_rellenar' → 'recibido_de_relleno'
+    consecutivo, cuántos días tardó el proveedor en devolverlo."""
+    cilindros = get_cilindros(gas=gas) if gas else get_cilindros()
+    resultado = []
+    for c in cilindros:
+        hist = sorted(get_historial(cilindro_id=c["id"], limite=500), key=lambda h: h["fecha"])
+        inicio = None
+        for h in hist:
+            if h.get("anulado"):
+                continue
+            if h["tipo"] == "enviado_a_rellenar":
+                inicio = h["fecha"]
+            elif h["tipo"] == "recibido_de_relleno" and inicio:
+                dias = (datetime.fromisoformat(h["fecha"]) - datetime.fromisoformat(inicio)).total_seconds() / 86400
+                resultado.append({
+                    "cilindro_id": c["id"], "gas": c["gas"],
+                    "identificacion": c.get("id_interno") or c.get("proveedor") or "—",
+                    "fecha_envio": inicio, "dias": round(dias, 1),
+                })
+                inicio = None
+    return resultado
+
+
 def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota="", remito_envio=None, remito_recepcion=None):
     sb = get_client()
     sb.table("movimientos_cilindro").insert({
