@@ -411,8 +411,13 @@ def render_home():
 
     if hay_gases:
         with cols[len(familias)]:
+            ruta_gases = _buscar_imagen("assets/iconos/familia_gases")
+            if ruta_gases:
+                icono_gases_html = f"<img src='{_img_datauri(ruta_gases)}' style='width:36px; height:36px; vertical-align:middle;' />"
+            else:
+                icono_gases_html = "🛢️"
             st.markdown(
-                "<div style='text-align:center; font-size:28px; margin-bottom:2px;'>🛢️</div>",
+                f"<div style='text-align:center; font-size:28px; margin-bottom:2px;'>{icono_gases_html}</div>",
                 unsafe_allow_html=True,
             )
             if st.button("Gases Cromatográficos", use_container_width=True, type="primary"):

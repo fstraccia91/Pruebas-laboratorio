@@ -181,12 +181,10 @@ def _render_gestionar_linea(linea_id):
             if cb1.button("🟢 Todavía tiene gas", key=f"desc_lleno_{linea_id}", use_container_width=True):
                 dg.desconectar_cilindro(linea_id, analista, tiene_gas=True, nota=nota_saca)
                 _confirmar(f"✅ Cilindro desconectado de {linea['nombre']} — queda lleno, disponible.")
-                st.session_state.gases_linea_id = None
                 st.rerun()
             if cb2.button("🔴 Está vacío", key=f"desc_vacio_{linea_id}", use_container_width=True, type="primary"):
                 dg.desconectar_cilindro(linea_id, analista, tiene_gas=False, nota=nota_saca)
                 _confirmar(f"✅ Cilindro desconectado de {linea['nombre']} — queda vacío, pendiente de enviar a rellenar.")
-                st.session_state.gases_linea_id = None
                 st.rerun()
             st.caption(
                 "El paso de \"ya lo mandé a rellenar\" se hace aparte, desde 🛢️ Cilindros, "
@@ -261,6 +259,19 @@ def _render_cilindros():
                 st.session_state.gases_grupo = clave
                 st.rerun()
 
+    if todos:
+        filas_export = [{
+            "Gas": c["gas"], "Capacidad (m³)": c["capacidad"], "Modalidad": MODALIDAD_LABEL.get(c["modalidad"], c["modalidad"]),
+            "ID interno": c.get("id_interno") or "", "Proveedor": c.get("proveedor") or "",
+            "Estado": ESTADOS_LABEL.get(c["estado"], c["estado"]), "Remito vigente": c.get("remito_actual") or "",
+            "Dado de alta por": c.get("creado_por") or "", "Fecha de alta": c.get("creado") or "",
+        } for c in todos]
+        csv_cilindros = pd.DataFrame(filas_export).to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "⬇️ Descargar listado de cilindros (CSV)", data=csv_cilindros,
+            file_name="cilindros_gases.csv", mime="text/csv",
+        )
+
 
 def _render_grupo_completo(grupo):
     """Listado directo de todos los cilindros de un grupo (En depósito,
@@ -297,9 +308,12 @@ def _render_grupo_completo(grupo):
                 remito_envio_actual = dg.remito_envio_vigente(c["id"])
                 if remito_envio_actual:
                     st.caption(f"🧾 Remito de devolución (este viaje): {remito_envio_actual}")
-                ultimo_rec = dg.ultimo_reclamo(c["id"])
-                if ultimo_rec:
-                    st.caption(f"📞 Último reclamo: {ultimo_rec['fecha'][:10]} — {ultimo_rec.get('motivo') or 'sin motivo'}")
+                reclamos_envio = dg.reclamos_de_este_envio(c["id"])
+                if reclamos_envio:
+                    with st.expander(f"📞 {len(reclamos_envio)} reclamo{'s' if len(reclamos_envio) != 1 else ''} en este viaje"):
+                        for r in reclamos_envio:
+                            st.markdown(f"**{r['fecha'][:16].replace('T', ' ')}** — {r.get('motivo') or 'sin motivo'}")
+                            st.caption(f"Por {r.get('analista') or '—'}" + (f" · {r['nota']}" if r.get('nota') else ""))
             elif c.get("remito_actual"):
                 st.caption(f"🧾 Remito vigente: {c['remito_actual']}")
 
@@ -422,70 +436,100 @@ def _render_editar_cilindro(cilindro_id):
             st.rerun()
 
 
+CATEGORIAS_HISTORIAL = {
+    "Todos": None,
+    "Conexiones": {"conectado", "desconectado"},
+    "Proveedor": {"enviado_a_rellenar", "recibido_de_relleno", "reclamo"},
+    "Altas y bajas": {"nuevo_ingreso", "retirado"},
+    "Correcciones": {"correccion", "remito_actualizado"},
+}
+
+RANGOS_FECHA = {"Todo el tiempo": None, "Últimos 7 días": 7, "Últimos 30 días": 30, "Últimos 90 días": 90}
+
+
 def _render_historial():
-    st.caption("Últimos movimientos de todos los cilindros. Filtrá por gas y/o por tipo de movimiento.")
+    st.caption("Agrupado por cilindro. Elegí una categoría, un gas y/o un rango de fechas.")
+
+    if "hist_categoria" not in st.session_state:
+        st.session_state.hist_categoria = "Todos"
+
+    cols_cat = st.columns(len(CATEGORIAS_HISTORIAL))
+    for col, nombre_cat in zip(cols_cat, CATEGORIAS_HISTORIAL):
+        with col:
+            activo = st.session_state.hist_categoria == nombre_cat
+            if st.button(nombre_cat, key=f"hist_cat_{nombre_cat}", use_container_width=True, type="primary" if activo else "secondary"):
+                st.session_state.hist_categoria = nombre_cat
+                st.rerun()
+
+    c1, c2 = st.columns(2)
+    gas_filtro = c1.selectbox("Gas", ["Todos"] + GASES, key="hist_gas_filtro")
+    rango_sel = c2.selectbox("Fecha", list(RANGOS_FECHA.keys()), key="hist_rango_fecha")
 
     cilindros_por_id = {c["id"]: c for c in dg.get_cilindros()}
     lineas_por_id = {l["id"]: l for l in dg.get_lineas()}
 
-    c1, c2 = st.columns([1, 2])
-    gas_filtro = c1.selectbox("Gas", ["Todos"] + GASES, key="hist_gas_filtro")
-    tipos_todos = list(TIPO_LABEL.keys())
-    tipos_sel = c2.multiselect(
-        "Tipo de movimiento", tipos_todos, default=tipos_todos,
-        format_func=lambda k: TIPO_LABEL[k][0], key="hist_tipos_filtro",
-    )
-
     movimientos = dg.get_historial()
+    tipos_cat = CATEGORIAS_HISTORIAL[st.session_state.hist_categoria]
+    if tipos_cat is not None:
+        movimientos = [m for m in movimientos if m["tipo"] in tipos_cat]
     if gas_filtro != "Todos":
         movimientos = [m for m in movimientos if cilindros_por_id.get(m["cilindro_id"], {}).get("gas") == gas_filtro]
-    if tipos_sel:
-        movimientos = [m for m in movimientos if m["tipo"] in tipos_sel]
-    else:
-        movimientos = []
+    limite_dias = RANGOS_FECHA[rango_sel]
+    if limite_dias is not None:
+        movimientos = [m for m in movimientos if (dg._dias_desde(m["fecha"]) or 99999) <= limite_dias]
 
     if not movimientos:
         st.info("No hay movimientos con ese filtro.")
         return
 
+    # Agrupar por cilindro, cada grupo ordenado por su movimiento más reciente.
+    por_cilindro = {}
     for m in movimientos:
-        cil = cilindros_por_id.get(m["cilindro_id"])
-        linea = lineas_por_id.get(m.get("linea_id"))
+        por_cilindro.setdefault(m["cilindro_id"], []).append(m)
+    cilindros_ordenados = sorted(
+        por_cilindro.keys(),
+        key=lambda cid: max(mv["fecha"] for mv in por_cilindro[cid]),
+        reverse=True,
+    )
+
+    st.caption(f"{len(cilindros_ordenados)} cilindro{'s' if len(cilindros_ordenados) != 1 else ''} con movimientos en este filtro.")
+
+    filas_export = []
+    for cid in cilindros_ordenados:
+        cil = cilindros_por_id.get(cid)
         etiqueta = _etiqueta_cilindro(cil) if cil else "(cilindro no encontrado)"
-        titulo_tipo, quien_label = TIPO_LABEL.get(m["tipo"], (m["tipo"], "Hecho por"))
+        movs_cil = sorted(por_cilindro[cid], key=lambda mv: mv["fecha"], reverse=True)
+        with st.expander(f"{etiqueta} · {len(movs_cil)} movimiento{'s' if len(movs_cil) != 1 else ''}"):
+            for m in movs_cil:
+                linea = lineas_por_id.get(m.get("linea_id"))
+                titulo_tipo, _ = TIPO_LABEL.get(m["tipo"], (m["tipo"], "Hecho por"))
+                filas_export.append({
+                    "Cilindro": etiqueta, "Tipo": titulo_tipo, "Fecha": m["fecha"],
+                    "Analista": m.get("analista") or "", "Línea": linea["nombre"] if linea else "",
+                    "Motivo": m.get("motivo") or "", "Nota": m.get("nota") or "",
+                    "Remito envío": m.get("remito_envio") or "", "Remito recepción": m.get("remito_recepcion") or "",
+                    "Anulado": "Sí" if m.get("anulado") else "No",
+                })
+                if m.get("anulado"):
+                    st.markdown(f"~~**{titulo_tipo}**~~ *(ANULADO)*")
+                    st.caption(f"Anulado por {m.get('anulado_por')} el {(m.get('anulado_fecha') or '')[:10]} — {m.get('anulado_motivo') or 'sin motivo'}")
+                    continue
 
-        with st.container(border=True):
-            if m.get("anulado"):
-                st.markdown(f"~~**{titulo_tipo}** — {etiqueta}~~ *(ANULADO)*")
-                st.caption(f"Anulado por {m.get('anulado_por')} el {(m.get('anulado_fecha') or '')[:10]} — {m.get('anulado_motivo') or 'sin motivo'}")
-                continue
+                _tarjeta_movimiento(m, lineas_por_id, cid)
+                with st.expander("❌ Anular este movimiento (fue un error)", expanded=False):
+                    motivo_anular = st.text_input("Motivo", key=f"motivo_anular_{m['id']}")
+                    if st.button("Confirmar anulación", key=f"btn_anular_{m['id']}"):
+                        dg.anular_movimiento(m["id"], st.session_state.analista_actual, motivo_anular)
+                        _confirmar("✅ Movimiento anulado.")
+                        st.rerun()
 
-            st.markdown(f"**{titulo_tipo}** — {etiqueta}")
-            detalle = f"{quien_label}: {m.get('analista') or '—'} · {m['fecha'][:16].replace('T', ' ')}"
-            if linea:
-                detalle += f" · {linea['nombre']}"
-            st.caption(detalle)
-            if m.get("motivo"):
-                st.caption(f"Motivo: {m['motivo']}")
-            if m.get("nota"):
-                st.caption(f"Nota: {m['nota']}")
-            if m["tipo"] == "enviado_a_rellenar" and m.get("remito_envio"):
-                st.caption(f"🧾 Remito de devolución: {m['remito_envio']}")
-            elif m.get("remito_recepcion"):
-                st.caption(f"🧾 Remito: {m['remito_recepcion']}")
-            elif m["tipo"] == "conectado":
-                remito_en_ese_momento = dg.remito_vigente_en(m["cilindro_id"], m["fecha"])
-                if remito_en_ese_momento:
-                    st.caption(f"🧾 Remito vigente en ese momento: {remito_en_ese_momento}")
-                else:
-                    st.caption("Sin remito registrado para esa carga.")
+    if filas_export:
+        csv = pd.DataFrame(filas_export).to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "⬇️ Descargar este historial (CSV)", data=csv,
+            file_name="historial_gases.csv", mime="text/csv",
+        )
 
-            with st.expander("❌ Anular este movimiento (fue un error)"):
-                motivo_anular = st.text_input("Motivo", key=f"motivo_anular_{m['id']}")
-                if st.button("Confirmar anulación", key=f"btn_anular_{m['id']}"):
-                    dg.anular_movimiento(m["id"], st.session_state.analista_actual, motivo_anular)
-                    _confirmar("✅ Movimiento anulado.")
-                    st.rerun()
 
 
 def _tarjeta_movimiento(m, lineas_por_id, cilindro_id):
@@ -619,16 +663,27 @@ def _render_buscar_circuito():
 
 
 def _render_graficos():
-    st.caption("Duración de los cilindros — pensado para ver de un vistazo cómo vienen rindiendo.")
+    st.caption("Duración de los cilindros — pensado para ver de un vistazo cómo vienen rindiendo. Cada gráfico tiene sus propios filtros, independientes entre sí.")
 
-    gas_sel = st.selectbox("Gas", ["Todos"] + GASES, key="graf_gas")
-    gas_filtro = None if gas_sel == "Todos" else gas_sel
+    modalidad_map = {"Propio": "propio", "Alquiler": "alquiler"}
 
+    # --- Gráfico 1: duración en el tiempo ---
     st.markdown("#### 🔌 Duración conectado, en el tiempo")
     st.caption("Cuánto duró cada carga desde que se conectó hasta que se desconectó (vacía). Cada punto es una conexión.")
-    datos_conexion = dg.duraciones_conexion(gas=gas_filtro)
+    g1c1, g1c2, g1c3 = st.columns(3)
+    gas1_sel = g1c1.selectbox("Gas", ["Todos"] + GASES, key="graf1_gas")
+    modalidad1_sel = g1c2.selectbox("Modalidad", ["Todos", "Propio", "Alquiler"], key="graf1_modalidad")
+    gas1 = None if gas1_sel == "Todos" else gas1_sel
+    modalidad1 = modalidad_map.get(modalidad1_sel)
+
+    datos_conexion = dg.duraciones_conexion(gas=gas1, modalidad=modalidad1)
+    cilindros_disp1 = sorted({d["identificacion"] for d in datos_conexion})
+    cilindro1_sel = g1c3.selectbox("Cilindro específico", ["Todos"] + cilindros_disp1, key="graf1_cilindro")
+    if cilindro1_sel != "Todos":
+        datos_conexion = [d for d in datos_conexion if d["identificacion"] == cilindro1_sel]
+
     if not datos_conexion:
-        st.info("Todavía no hay ciclos completos (conectado → desconectado) para graficar.")
+        st.info("Todavía no hay ciclos completos (conectado → desconectado) para graficar con estos filtros.")
     else:
         df_conexion = pd.DataFrame(datos_conexion)
         df_conexion["fecha_inicio"] = pd.to_datetime(df_conexion["fecha_inicio"])
@@ -641,35 +696,44 @@ def _render_graficos():
         st.plotly_chart(fig1, use_container_width=True)
 
     st.divider()
+
+    # --- Gráfico 2: comparar cilindros entre sí ---
     st.markdown("#### 🛢️ Comparar cilindros entre sí")
-    st.caption("Duración promedio por cilindro individual (mismo gas) — para detectar si alguno rinde menos que el resto.")
-    if not gas_filtro:
-        st.info("Elegí un gas arriba para comparar sus cilindros entre sí.")
-    elif not datos_conexion:
-        st.info("Todavía no hay datos para este gas.")
+    st.caption("Duración promedio por cilindro individual — para detectar si alguno rinde menos que el resto.")
+    g2c1, g2c2 = st.columns(2)
+    gas2 = g2c1.selectbox("Gas", GASES, key="graf2_gas")
+    modalidad2_sel = g2c2.selectbox("Modalidad", ["Todos", "Propio", "Alquiler"], key="graf2_modalidad")
+    modalidad2 = modalidad_map.get(modalidad2_sel)
+
+    datos_conexion2 = dg.duraciones_conexion(gas=gas2, modalidad=modalidad2)
+    if not datos_conexion2:
+        st.info("Todavía no hay datos para estos filtros.")
     else:
-        df_cmp = pd.DataFrame(datos_conexion)
+        df_cmp = pd.DataFrame(datos_conexion2)
         promedio_por_cilindro = df_cmp.groupby("identificacion")["dias"].mean().reset_index()
         promedio_por_cilindro.columns = ["Cilindro", "Promedio de días conectado"]
         promedio_por_cilindro = promedio_por_cilindro.sort_values("Promedio de días conectado", ascending=False)
         fig2 = px.bar(
             promedio_por_cilindro, x="Cilindro", y="Promedio de días conectado",
-            title=f"Duración promedio por cilindro — {gas_filtro}",
+            title=f"Duración promedio por cilindro — {gas2}",
         )
         fig2.update_xaxes(type="category")
         st.plotly_chart(fig2, use_container_width=True)
 
     st.divider()
+
+    # --- Gráfico 3: tiempo del proveedor ---
     st.markdown("#### 🔄 Tiempo que tarda el proveedor")
-    st.caption("Días entre 'Enviado a rellenar' y 'Recibido de relleno', por gas.")
-    datos_relleno = dg.duraciones_relleno(gas=gas_filtro)
+    st.caption("Días entre 'Enviado a rellenar' y 'Recibido de relleno'.")
+    g3c1, g3c2 = st.columns(2)
+    gas3_sel = g3c1.selectbox("Gas", ["Todos"] + GASES, key="graf3_gas")
+    agrupar = g3c2.selectbox("Agrupar por", ["Todos juntos", "Separado por modalidad/proveedor"], key="graf_relleno_agrupar")
+    gas3 = None if gas3_sel == "Todos" else gas3_sel
+
+    datos_relleno = dg.duraciones_relleno(gas=gas3)
     if not datos_relleno:
-        st.info("Todavía no hay ciclos completos (enviado → recibido) para graficar.")
+        st.info("Todavía no hay ciclos completos (enviado → recibido) para graficar con estos filtros.")
     else:
-        agrupar = st.radio(
-            "Agrupar por", ["Todos juntos", "Separado por modalidad/proveedor"],
-            key="graf_relleno_agrupar", horizontal=True,
-        )
         df_relleno = pd.DataFrame(datos_relleno)
         if agrupar == "Todos juntos":
             promedio_por_gas = df_relleno.groupby("gas")["dias"].mean().reset_index()
@@ -692,6 +756,7 @@ def _render_graficos():
             )
             fig3.update_xaxes(type="category")
         st.plotly_chart(fig3, use_container_width=True)
+
 
 
 

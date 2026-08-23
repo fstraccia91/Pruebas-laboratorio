@@ -21,10 +21,10 @@ def _img_b64(path):
 
 
 def _buscar_imagen(base_sin_extension):
-    """Busca <base>.png, .jpg, .jpeg o .webp (probando también en mayúsculas) y
-    devuelve la ruta que encuentre primero, o None si no existe ninguna.
-    Así no importa en qué formato hayas guardado la imagen."""
-    for ext in ("png", "jpg", "jpeg", "webp", "PNG", "JPG", "JPEG", "WEBP"):
+    """Busca <base>.png, .jpg, .jpeg, .webp o .jfif (probando también en
+    mayúsculas) y devuelve la ruta que encuentre primero, o None si no
+    existe ninguna. Así no importa en qué formato hayas guardado la imagen."""
+    for ext in ("png", "jpg", "jpeg", "webp", "jfif", "PNG", "JPG", "JPEG", "WEBP", "JFIF"):
         ruta = f"{base_sin_extension}.{ext}"
         if os.path.exists(ruta):
             return ruta
@@ -33,7 +33,7 @@ def _buscar_imagen(base_sin_extension):
 
 def _mime_tipo(ruta):
     ext = ruta.rsplit(".", 1)[-1].lower()
-    if ext in ("jpg", "jpeg"):
+    if ext in ("jpg", "jpeg", "jfif"):
         return "image/jpeg"
     if ext == "webp":
         return "image/webp"
