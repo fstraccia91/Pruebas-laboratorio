@@ -17,7 +17,7 @@ from datetime import datetime, date
 
 from datos import get_client
 
-GASES = ["N2", "Aire", "H2", "Argón"]
+GASES = ["N2", "Aire", "H2", "Helio"]
 
 
 def modulo_habilitado():
@@ -245,6 +245,20 @@ def remito_envio_vigente(cilindro_id):
     historial = get_historial(cilindro_id=cilindro_id, limite=500)
     envios = [h for h in historial if h["tipo"] == "enviado_a_rellenar" and not h.get("anulado")]
     return envios[0].get("remito_envio") if envios else None
+
+
+def remito_envio_vigente_en(cilindro_id, fecha_referencia):
+    """Igual que remito_envio_vigente, pero para un momento del pasado (el
+    último 'enviado_a_rellenar' antes o en esa fecha) — para saber a qué
+    viaje al proveedor corresponde un reclamo hecho durante esa estadía,
+    incluso si después el cilindro volvió y se fue de nuevo varias veces."""
+    historial = get_historial(cilindro_id=cilindro_id, limite=500)
+    candidatos = [
+        h for h in historial
+        if h.get("remito_envio") and h["tipo"] == "enviado_a_rellenar"
+        and not h.get("anulado") and h["fecha"] <= fecha_referencia
+    ]
+    return candidatos[0]["remito_envio"] if candidatos else None
 
 
 def listar_remitos(gas=None):

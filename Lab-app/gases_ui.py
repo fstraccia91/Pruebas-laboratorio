@@ -11,7 +11,7 @@ import streamlit as st
 
 import datos_gases as dg
 from datos_gases import GASES
-from ui_helpers import titulo_seccion, subtitulo_con_icono, fila_dos_lados
+from ui_helpers import titulo_seccion, subtitulo_con_icono, fila_dos_lados, _buscar_imagen, _img_datauri
 
 ESTADOS_LABEL = {
     "lleno": "✅ Lleno, en depósito",
@@ -46,6 +46,15 @@ COLOR_TIPO = {
     "remito_actualizado": "#1565C0",
     "reclamo": "#D32F2F",
 }
+
+
+def _icono_gases_html(tamano=28):
+    """Ícono de Gases: si subiste assets/iconos/familia_gases.*, lo usa; si
+    no, cae al emoji 🛢️ — mismo patrón que el resto de los íconos de familia."""
+    ruta = _buscar_imagen("assets/iconos/familia_gases")
+    if ruta:
+        return f"<img src='{_img_datauri(ruta)}' style='width:{tamano}px; height:{tamano}px; vertical-align:middle;' />"
+    return "🛢️"
 
 
 def _confirmar(msg):
@@ -94,7 +103,7 @@ def render_gases():
                 st.session_state.familia_id = None
             st.rerun()
     with top2:
-        titulo_seccion("Gases Cromatográficos", "🛢️")
+        titulo_seccion("Gases Cromatográficos", _icono_gases_html())
 
     _mostrar_confirmacion()
 
@@ -112,6 +121,14 @@ def render_gases():
         _render_inicio()
 
 
+COLOR_GAS_IRAM = {
+    "N2": "#2E7D32",     # verde (Nitrógeno industrial, IRAM 2641)
+    "H2": "#C62828",     # rojo (Hidrógeno, gas inflamable, IRAM 2641)
+    "Helio": "#795548",  # marrón/castaño (Helio, IRAM 2641)
+    "Aire": "linear-gradient(90deg, #2E7D32 50%, #1565C0 50%)",  # mitad verde, mitad azul
+}
+
+
 def _render_inicio():
     alertas_stock = dg.alertas_stock_bajo(minimo=1)
     if alertas_stock:
@@ -123,22 +140,33 @@ def _render_inicio():
         texto = " · ".join(f"{_etiqueta_cilindro(c)} (hace {dias} días)" for c, dias in alertas_demora)
         st.warning(f"⏰ Hace más de un mes en el proveedor, conviene consultar: {texto}")
 
-    st.caption("Estado actual de cada línea.")
+    st.caption("Estado actual de cada línea. El color de arriba de cada tarjeta es el color de identificación de ese gas, según la norma IRAM.")
     lineas = dg.get_lineas()
     cols = st.columns(2)
     for idx, l in enumerate(lineas):
         with cols[idx % 2]:
-            with st.container(border=True):
-                cil = l.get("cilindro_actual")
-                if cil:
-                    st.markdown(f"<span style='font-weight:600; font-size:0.95rem;'>{l['nombre']}</span>", unsafe_allow_html=True)
-                    st.markdown(f"<span style='color:#5C6B67; font-size:0.85rem;'>{_etiqueta_cilindro(cil)}</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<span style='font-weight:600; font-size:0.95rem;'>{l['nombre']}</span>", unsafe_allow_html=True)
-                    st.markdown("<span style='color:#A6362B; font-size:0.85rem;'>Sin cilindro conectado</span>", unsafe_allow_html=True)
-                if st.button("Gestionar", key=f"gestionar_linea_{l['id']}", use_container_width=True, type="primary"):
-                    st.session_state.gases_linea_id = l["id"]
-                    st.rerun()
+            color_gas = COLOR_GAS_IRAM.get(l["gas"], "#5C6B67")
+            cil = l.get("cilindro_actual")
+            if cil:
+                info_html = (
+                    f"<span style='font-weight:600; font-size:0.95rem;'>{l['nombre']}</span><br>"
+                    f"<span style='color:#5C6B67; font-size:0.85rem;'>{_etiqueta_cilindro(cil)}</span>"
+                )
+            else:
+                info_html = (
+                    f"<span style='font-weight:600; font-size:0.95rem;'>{l['nombre']}</span><br>"
+                    f"<span style='color:#A6362B; font-size:0.85rem;'>Sin cilindro conectado</span>"
+                )
+            st.markdown(
+                f"<div style='border:1px solid #E0E0E0; border-radius:8px; overflow:hidden; margin-bottom:8px;'>"
+                f"<div style='height:6px; background:{color_gas};'></div>"
+                f"<div style='padding:12px;'>{info_html}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Gestionar", key=f"gestionar_linea_{l['id']}", use_container_width=True, type="primary"):
+                st.session_state.gases_linea_id = l["id"]
+                st.rerun()
 
     st.divider()
     b1, b2, b3, b4 = st.columns(4)
@@ -386,7 +414,7 @@ def _render_editar_cilindro(cilindro_id):
 
     st.markdown(f"**✏️ Editar: {_etiqueta_cilindro(c)}**")
     e1, e2, e3 = st.columns(3)
-    nuevo_gas = e1.selectbox("Gas", ["N2", "Aire", "H2", "Argón"], index=["N2", "Aire", "H2", "Argón"].index(c["gas"]), key=f"edit_gas_{c['id']}")
+    nuevo_gas = e1.selectbox("Gas", GASES, index=GASES.index(c["gas"]), key=f"edit_gas_{c['id']}")
     nueva_cap = e2.selectbox("Capacidad", [7, 9], index=[7, 9].index(int(c["capacidad"])), format_func=lambda v: f"{v} m³", key=f"edit_cap_{c['id']}")
     nueva_modalidad = e3.selectbox("Modalidad", ["propio", "alquiler"], index=["propio", "alquiler"].index(c["modalidad"]), format_func=lambda v: MODALIDAD_LABEL[v], key=f"edit_modalidad_{c['id']}")
 
@@ -546,7 +574,14 @@ def _tarjeta_movimiento(m, lineas_por_id, cilindro_id):
     if m.get("remito_envio"):
         etiqueta_remito = "Remito de devolución"
     if not remito_mostrar:
-        remito_mostrar = dg.remito_vigente_en(cilindro_id, m["fecha"])
+        if m["tipo"] == "reclamo":
+            # Un reclamo se hace mientras el cilindro está en el proveedor —
+            # corresponde al remito de DEVOLUCIÓN de ese viaje, no al de
+            # recepción de la carga anterior (ya usada).
+            remito_mostrar = dg.remito_envio_vigente_en(cilindro_id, m["fecha"])
+            etiqueta_remito = "Remito de devolución"
+        else:
+            remito_mostrar = dg.remito_vigente_en(cilindro_id, m["fecha"])
 
     detalle = f"{quien_label}: {m.get('analista') or '—'} · {m['fecha'][:16].replace('T', ' ')}"
     if linea:
