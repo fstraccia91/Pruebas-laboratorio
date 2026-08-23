@@ -183,6 +183,15 @@ def get_historial(cilindro_id=None, limite=200):
     return q.order("fecha", desc=True).limit(limite).execute().data
 
 
+def ultimo_movimiento(cilindro_id):
+    """El movimiento más reciente de este cilindro (de cualquier tipo, no
+    anulado) — para saber cuándo fue la última modificación y quién la hizo,
+    y para poder ordenar listados por 'más reciente primero'."""
+    hist = get_historial(cilindro_id=cilindro_id, limite=20)
+    no_anulados = [h for h in hist if not h.get("anulado")]
+    return no_anulados[0] if no_anulados else None
+
+
 def remito_vigente_en(cilindro_id, fecha_referencia):
     """El remito que estaba vigente en ese cilindro en un momento del
     pasado (el último recibido antes o en esa fecha) — no necesariamente el

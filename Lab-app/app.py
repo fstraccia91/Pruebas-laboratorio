@@ -388,8 +388,6 @@ def render_home():
         st.session_state.analista_actual = None
         st.rerun()
     titulo_seccion(NOMBRE_LABORATORIO, "🧪")
-    st.caption(f"{SUBTITULO_LABORATORIO} · Panel de Insumos")
-    st.caption("Elegí qué stock querés ver. Cada familia se controla por separado.")
 
     alertas = []
     alertas_venc = []
@@ -409,7 +407,9 @@ def render_home():
         st.warning("⚠️ " + " · ".join(alertas) + " — por debajo del mínimo.")
     if alertas_venc:
         st.warning("📅 " + " · ".join(alertas_venc) + " — revisar vencimiento.")
-    if gases_habilitado():
+
+    hay_gases = gases_habilitado()
+    if hay_gases:
         try:
             from datos_gases import alertas_stock_bajo, alertas_relleno_demorado
             alertas_gases_stock = alertas_stock_bajo(minimo=1)
@@ -422,9 +422,10 @@ def render_home():
             pass
 
     familias = get_familias()
-    cols = st.columns(len(familias))
-    for col, fam in zip(cols, familias):
-        with col:
+    total_botones = len(familias) + (1 if hay_gases else 0)
+    cols = st.columns(total_botones)
+    for idx, fam in enumerate(familias):
+        with cols[idx]:
             st.markdown(
                 f"<div style='text-align:center; font-size:28px; margin-bottom:2px;'>{icono_familia_html(fam, tamano=36)}</div>",
                 unsafe_allow_html=True,
@@ -437,17 +438,14 @@ def render_home():
                     st.rerun()
             else:
                 st.button(fam["nombre"], use_container_width=True, disabled=True)
-                st.caption("Próximamente")
 
-    url_conectada = os.environ.get("SUPABASE_URL", "(sin configurar)")
-    st.caption(f"🔌 Base de datos conectada: {url_conectada}")
-
-    if gases_habilitado():
-        st.divider()
-        st.caption("Otros módulos:")
-        gcol1, gcol2, gcol3 = st.columns(3)
-        with gcol1:
-            if st.button("🛢️ Gases Cromatográficos", use_container_width=True, type="primary"):
+    if hay_gases:
+        with cols[len(familias)]:
+            st.markdown(
+                "<div style='text-align:center; font-size:28px; margin-bottom:2px;'>🛢️</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Gases Cromatográficos", use_container_width=True, type="primary"):
                 st.session_state.familia_id = "__gases__"
                 st.rerun()
 

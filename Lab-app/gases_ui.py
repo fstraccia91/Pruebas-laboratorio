@@ -59,7 +59,7 @@ def render_gases():
     for clave, valor in [
         ("gases_seccion", None), ("gases_linea_id", None),
         ("confirmacion_gases", None), ("gases_editar_id", None),
-        ("gases_grupo", None), ("gases_gas_filtro", None),
+        ("gases_grupo", None),
     ]:
         if clave not in st.session_state:
             st.session_state[clave] = valor
@@ -69,8 +69,6 @@ def render_gases():
         if st.button("← Menú", key="btn_volver_menu"):
             if st.session_state.gases_editar_id:
                 st.session_state.gases_editar_id = None
-            elif st.session_state.gases_gas_filtro:
-                st.session_state.gases_gas_filtro = None
             elif st.session_state.gases_grupo:
                 st.session_state.gases_grupo = None
             elif st.session_state.gases_linea_id:
@@ -199,12 +197,8 @@ def _render_cilindros():
         _render_editar_cilindro(st.session_state.gases_editar_id)
         return
 
-    if st.session_state.gases_gas_filtro:
-        _render_listado_grupo_gas(st.session_state.gases_grupo, st.session_state.gases_gas_filtro)
-        return
-
     if st.session_state.gases_grupo:
-        _render_elegir_gas(st.session_state.gases_grupo)
+        _render_grupo_completo(st.session_state.gases_grupo)
         return
 
     with st.expander("➕ Nuevo cilindro"):
@@ -248,41 +242,33 @@ def _render_cilindros():
                 st.rerun()
 
 
-def _render_elegir_gas(grupo):
+def _render_grupo_completo(grupo):
+    """Listado directo de todos los cilindros de un grupo (En depósito,
+    Pedir relleno, En el proveedor, Conectados), con un filtro de gas de
+    multi-selección (igual formato que elegir riesgos GHS en Solventes) en
+    vez de un botón por gas — y ordenado por última modificación, más
+    reciente primero, mostrando fecha y quién."""
     titulos = {
         "lleno": "📦 En depósito", "vacio": "📤 Pedir relleno",
         "en_relleno": "🔄 En el proveedor", "conectado": "🔌 Conectados",
     }
     subtitulo_con_icono(titulos[grupo], "")
-    st.caption("Elegí el gas.")
-    todos = dg.get_cilindros(estado=grupo)
-    cols = st.columns(2)
-    for idx, gas in enumerate(GASES):
-        cilindros_gas = [c for c in todos if c["gas"] == gas]
-        with cols[idx % 2]:
-            if st.button(f"{gas} ({len(cilindros_gas)})", key=f"gas_{grupo}_{gas}", use_container_width=True, type="primary"):
-                st.session_state.gases_gas_filtro = gas
-                st.rerun()
-            if grupo == "en_relleno" and cilindros_gas:
-                remitos = [dg.remito_envio_vigente(c["id"]) for c in cilindros_gas]
-                remitos = [r for r in remitos if r]
-                if remitos:
-                    st.caption("🧾 " + ", ".join(remitos))
 
+    gases_sel = st.multiselect("Gas", GASES, default=GASES, key=f"filtro_gas_{grupo}")
+    cilindros_grupo = [c for c in dg.get_cilindros(estado=grupo) if c["gas"] in gases_sel]
 
-def _render_listado_grupo_gas(grupo, gas):
-    titulos = {
-        "lleno": "📦 En depósito", "vacio": "📤 Pedir relleno",
-        "en_relleno": "🔄 En el proveedor", "conectado": "🔌 Conectados",
-    }
-    subtitulo_con_icono(f"{titulos[grupo]} · {gas}", "")
+    anotados = []
+    for c in cilindros_grupo:
+        ultimo = dg.ultimo_movimiento(c["id"])
+        anotados.append((ultimo["fecha"] if ultimo else "", c, ultimo))
+    anotados.sort(key=lambda t: t[0], reverse=True)
 
-    cilindros_grupo = dg.get_cilindros(gas=gas, estado=grupo)
-    if not cilindros_grupo:
+    if not anotados:
         st.info("No hay ninguno acá.")
         return
+    st.caption(f"{len(anotados)} cilindro{'s' if len(anotados) != 1 else ''}, ordenados por última modificación.")
 
-    for c in cilindros_grupo:
+    for _, c, ultimo in anotados:
         with st.container(border=True):
             izq = f"<span style='font-weight:600;'>{_etiqueta_cilindro(c)}</span>"
             fila_dos_lados(izq, "")
@@ -293,6 +279,10 @@ def _render_listado_grupo_gas(grupo, gas):
                     st.caption(f"🧾 Remito de devolución (este viaje): {remito_envio_actual}")
             elif c.get("remito_actual"):
                 st.caption(f"🧾 Remito vigente: {c['remito_actual']}")
+
+            if ultimo:
+                _, quien_label = TIPO_LABEL.get(ultimo["tipo"], (ultimo["tipo"], "Hecho por"))
+                st.caption(f"{quien_label}: {ultimo.get('analista') or '—'} · {ultimo['fecha'][:16].replace('T', ' ')}")
 
             cc1, cc2, cc3 = st.columns(3)
             if grupo == "vacio":
