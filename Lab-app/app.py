@@ -151,6 +151,10 @@ st.markdown("""
     div[class*="st-key-tbnv"] div[data-testid="stButton"] > button {
         justify-content: flex-start !important;
     }
+    div[class*="st-key-tbnv"] div[data-testid="stButton"] > button > div {
+        justify-content: flex-start !important;
+        width: 100%;
+    }
     div[class*="st-key-tbnv0"] {
         border: 2px solid #14504A !important;
         border-radius: 14px !important;
