@@ -548,3 +548,24 @@ def alertas_pedido_sin_resolver(dias_limite=7):
         if dias is not None and dias >= dias_limite:
             resultado.append((c, pedido, dias))
     return resultado
+
+
+def alertas_stock_predictivas(dias_limite=15):
+    """Para cada gas, estima cuántos días de autonomía quedan según el
+    promedio REAL de cuánto dura cada conexión (no solo cuántos cilindros
+    llenos hay) — más útil que alertas_stock_bajo, que solo mira cantidad
+    sin importar el ritmo de consumo. Devuelve [(gas, dias_estimados), ...]
+    para los gases cuya autonomía estimada sea menor a dias_limite."""
+    resultado = []
+    for gas in GASES:
+        duraciones = duraciones_conexion(gas=gas)
+        if not duraciones:
+            continue
+        promedio_dias = sum(d["dias"] for d in duraciones) / len(duraciones)
+        if promedio_dias <= 0:
+            continue
+        cilindros_llenos = len(get_cilindros(gas=gas, estado="lleno"))
+        dias_estimados = round(cilindros_llenos * promedio_dias, 1)
+        if dias_estimados < dias_limite:
+            resultado.append((gas, dias_estimados))
+    return resultado

@@ -144,10 +144,20 @@ def _render_inicio():
         texto = " · ".join(f"{gas} (quedan {cant} lleno{'s' if cant != 1 else ''})" for gas, cant in alertas_stock)
         st.warning(f"⚠️ Pocos cilindros de repuesto: {texto} — conviene mandar a rellenar.")
 
+    alertas_predictivas = dg.alertas_stock_predictivas(dias_limite=15)
+    if alertas_predictivas:
+        texto = " · ".join(f"{gas} (autonomía estimada: ~{dias:g} días)" for gas, dias in alertas_predictivas)
+        st.warning(f"📉 Al ritmo actual de consumo, quedan pocos días de autonomía: {texto}")
+
     alertas_demora = dg.alertas_relleno_demorado(dias_limite=30)
     if alertas_demora:
         texto = " · ".join(f"{_etiqueta_cilindro(c)} (hace {dias} días)" for c, dias in alertas_demora)
         st.warning(f"⏰ Hace más de un mes en el proveedor, conviene consultar: {texto}")
+
+    alertas_pedido = dg.alertas_pedido_sin_resolver(dias_limite=7)
+    if alertas_pedido:
+        texto = " · ".join(f"{_etiqueta_cilindro(c)} (pedido N° {p.get('numero_pedido') or '—'}, hace {dias} días)" for c, p, dias in alertas_pedido)
+        st.warning(f"📞 Pedido sin resolver hace más de una semana: {texto}")
 
     st.caption("Elegí qué querés hacer.")
     persona_actual = st.session_state.analista_actual
@@ -199,21 +209,28 @@ def _render_conectar_desconectar():
                 info_html = f"<span style='color:#5C6B67; font-size:0.85rem;'>{_etiqueta_cilindro(cil)}</span>"
             else:
                 info_html = "<span style='color:#A6362B; font-size:0.85rem;'>Sin cilindro conectado</span>"
-            st.markdown(
+
+            tarjeta_html = (
                 f"<div style='border:1px solid #E0E0E0; border-radius:8px; overflow:hidden; margin-bottom:4px;'>"
                 f"<div style='height:6px; background:{color_gas};'></div>"
                 f"<div style='padding:10px 12px;'>{info_html}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
+                f"</div>"
             )
+            if cil:
+                c_gear, c_card = st.columns([1, 7])
+                with c_gear:
+                    st.write("")
+                    if st.button("⚙️", key=f"gear_linea_{l['id']}", help="Editar este tubo"):
+                        st.session_state.gases_editar_id = cil["id"]
+                        st.rerun()
+                with c_card:
+                    st.markdown(tarjeta_html, unsafe_allow_html=True)
+            else:
+                st.markdown(tarjeta_html, unsafe_allow_html=True)
+
             if st.button(l["gas"], key=f"linea_btn_{l['id']}", use_container_width=True, type="primary"):
                 st.session_state.gases_linea_id = l["id"]
                 st.rerun()
-            if cil:
-                with st.expander("⚙️ Más opciones"):
-                    if st.button("✏️ Editar tubo conectado", key=f"editar_desde_linea_{l['id']}", use_container_width=True):
-                        st.session_state.gases_editar_id = cil["id"]
-                        st.rerun()
 
 
 def _render_gestionar_linea(linea_id):
@@ -352,7 +369,15 @@ def _render_grupo_completo(grupo):
     }
     subtitulo_con_icono(titulos[grupo], "")
 
-    gases_sel = st.multiselect("Gas", GASES, default=GASES, key=f"filtro_gas_{grupo}")
+    st.caption("Gas:")
+    cols_gas = st.columns(len(GASES))
+    gases_sel = []
+    for idx, gas in enumerate(GASES):
+        key_check = f"filtro_gas_{grupo}_{gas}"
+        if key_check not in st.session_state:
+            st.session_state[key_check] = True
+        if cols_gas[idx].checkbox(gas, key=key_check):
+            gases_sel.append(gas)
     cilindros_grupo = [c for c in _cilindros_del_grupo(grupo) if c["gas"] in gases_sel]
 
     anotados = []
@@ -368,8 +393,12 @@ def _render_grupo_completo(grupo):
 
     for _, c, ultimo in anotados:
         with st.container(border=True):
-            izq = f"<span style='font-weight:600;'>{_etiqueta_cilindro(c)}</span>"
-            fila_dos_lados(izq, "")
+            c_gear, c_title = st.columns([1, 7])
+            with c_gear:
+                if c_gear.button("⚙️", key=f"gear_{c['id']}", help="Editar o dar de baja este cilindro"):
+                    st.session_state[f"mostrar_ajustes_{c['id']}"] = not st.session_state.get(f"mostrar_ajustes_{c['id']}", False)
+            with c_title:
+                st.markdown(f"<span style='font-weight:600;'>{_etiqueta_cilindro(c)}</span>", unsafe_allow_html=True)
 
             if grupo == "vacio_con_pedido":
                 pedido = dg.pedido_activo(c["id"])
@@ -472,7 +501,7 @@ def _render_grupo_completo(grupo):
                         _confirmar(f"✅ Reclamo registrado para {_etiqueta_cilindro(c)}.")
                         st.rerun()
 
-            with st.expander("⚙️ Más opciones"):
+            if st.session_state.get(f"mostrar_ajustes_{c['id']}"):
                 m1, m2 = st.columns(2)
                 if m1.button("✏️ Editar", key=f"editar_{c['id']}", use_container_width=True):
                     st.session_state.gases_editar_id = c["id"]

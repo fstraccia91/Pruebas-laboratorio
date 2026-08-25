@@ -1012,17 +1012,22 @@ def render_gestion_item(item):
         st.caption("Sin lotes todavía.")
 
     st.divider()
-    b1, b2, b3, b4, b5 = st.columns(5)
+    b1, b2, b_gear = st.columns([2, 2, 1])
     if b1.button("➕ Agregar lote", use_container_width=True, type="primary"):
         st.session_state.stock_modo_gestion = "agregar"
     if b2.button("📥 Cargar a lote existente", use_container_width=True, disabled=not lotes):
         st.session_state.stock_modo_gestion = "cargar"
-    if b3.button("✏️ Editar lote", use_container_width=True, disabled=not lotes):
-        st.session_state.stock_modo_gestion = "editar_lote"
-    if b4.button("🗑️ Eliminar lote", use_container_width=True, disabled=not lotes):
-        st.session_state.stock_modo_gestion = "eliminar"
-    if b5.button("✏️ Editar ítem", use_container_width=True):
-        st.session_state.stock_modo_gestion = "editar"
+    if b_gear.button("⚙️", key=f"gear_stock_{item['id']}", help="Editar lote, eliminar lote, o editar el ítem"):
+        st.session_state[f"mostrar_ajustes_stock_{item['id']}"] = not st.session_state.get(f"mostrar_ajustes_stock_{item['id']}", False)
+
+    if st.session_state.get(f"mostrar_ajustes_stock_{item['id']}"):
+        m1, m2, m3 = st.columns(3)
+        if m1.button("✏️ Editar lote", use_container_width=True, disabled=not lotes):
+            st.session_state.stock_modo_gestion = "editar_lote"
+        if m2.button("🗑️ Eliminar lote", use_container_width=True, disabled=not lotes):
+            st.session_state.stock_modo_gestion = "eliminar"
+        if m3.button("✏️ Editar ítem", use_container_width=True):
+            st.session_state.stock_modo_gestion = "editar"
 
     modo = st.session_state.get("stock_modo_gestion")
 
