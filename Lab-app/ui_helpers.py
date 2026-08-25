@@ -170,3 +170,79 @@ def fila_titulo_pictogramas(titulo_html, riesgos_str, tamano_picto=24):
         """,
         unsafe_allow_html=True,
     )
+
+
+# ---------------------------------------------------------------------
+# Sistema de diseño: franja ondulada + tarjetas con ícono, con una
+# escalada de color según qué tan profundo estás navegando en la app.
+#   Nivel 0 → módulos (Solventes, Consumibles, Gases) en la pantalla de inicio.
+#   Nivel 1 → secciones dentro de un módulo (Usar, Chequear, Gestión de
+#             Laboratorio, o en Gases: Conectar/Desconectar, Gestión de tubos...).
+#   Nivel 2 → botones de acción dentro de una pantalla (Movimientos, Compras,
+#             Gráficos dentro de Gestión de Laboratorio; los 4 grupos dentro
+#             de Gestión de tubos).
+# ---------------------------------------------------------------------
+
+NIVEL_COLORES = {
+    0: "#14504A",  # verde/teal de marca — el mismo que ya usan los títulos
+    1: "#3D8577",  # teal medio, un escalón más claro
+    2: "#5DADE2",  # celeste — el más claro de los tres
+}
+
+_ONDAS = {
+    1: "polygon(0 0, 100% 0, 100.0% 88.0%, 97.5% 90.3%, 95.0% 92.5%, 92.5% 94.5%, 90.0% 96.1%, 87.5% 97.2%, 85.0% 97.9%, 82.5% 98.0%, 80.0% 97.5%, 77.5% 96.5%, 75.0% 95.1%, 72.5% 93.2%, 70.0% 91.1%, 67.5% 88.8%, 65.0% 86.4%, 62.5% 84.2%, 60.0% 82.1%, 57.5% 80.4%, 55.0% 79.1%, 52.5% 78.3%, 50.0% 78.0%, 47.5% 78.3%, 45.0% 79.1%, 42.5% 80.4%, 40.0% 82.1%, 37.5% 84.2%, 35.0% 86.4%, 32.5% 88.8%, 30.0% 91.1%, 27.5% 93.2%, 25.0% 95.1%, 22.5% 96.5%, 20.0% 97.5%, 17.5% 98.0%, 15.0% 97.9%, 12.5% 97.2%, 10.0% 96.1%, 7.5% 94.5%, 5.0% 92.5%, 2.5% 90.3%, 0.0% 88.0%)",
+    2: "polygon(0 0, 100% 0, 100.0% 96.7%, 97.5% 97.3%, 95.0% 97.7%, 92.5% 98.0%, 90.0% 98.0%, 87.5% 97.8%, 85.0% 97.5%, 82.5% 96.9%, 80.0% 96.2%, 77.5% 95.3%, 75.0% 94.3%, 72.5% 93.2%, 70.0% 92.0%, 67.5% 90.8%, 65.0% 89.5%, 62.5% 88.3%, 60.0% 87.1%, 57.5% 86.0%, 55.0% 84.9%, 52.5% 84.0%, 50.0% 83.3%, 47.5% 82.7%, 45.0% 82.3%, 42.5% 82.0%, 40.0% 82.0%, 37.5% 82.2%, 35.0% 82.5%, 32.5% 83.1%, 30.0% 83.8%, 27.5% 84.7%, 25.0% 85.7%, 22.5% 86.8%, 20.0% 88.0%, 17.5% 89.2%, 15.0% 90.5%, 12.5% 91.7%, 10.0% 92.9%, 7.5% 94.0%, 5.0% 95.1%, 2.5% 96.0%, 0.0% 96.7%)",
+    3: "polygon(0 0, 100% 0, 100.0% 91.8%, 97.5% 94.7%, 95.0% 96.8%, 92.5% 97.9%, 90.0% 97.8%, 87.5% 96.5%, 85.0% 94.2%, 82.5% 91.1%, 80.0% 87.5%, 77.5% 83.8%, 75.0% 80.2%, 72.5% 77.3%, 70.0% 75.2%, 67.5% 74.1%, 65.0% 74.2%, 62.5% 75.5%, 60.0% 77.8%, 57.5% 80.9%, 55.0% 84.5%, 52.5% 88.2%, 50.0% 91.8%, 47.5% 94.7%, 45.0% 96.8%, 42.5% 97.9%, 40.0% 97.8%, 37.5% 96.5%, 35.0% 94.2%, 32.5% 91.1%, 30.0% 87.5%, 27.5% 83.8%, 25.0% 80.2%, 22.5% 77.3%, 20.0% 75.2%, 17.5% 74.1%, 15.0% 74.2%, 12.5% 75.5%, 10.0% 77.8%, 7.5% 80.9%, 5.0% 84.5%, 2.5% 88.2%, 0.0% 91.8%)",
+}
+
+
+def icono_seccion_html(nombre_base, tamano=30, emoji_respaldo=""):
+    """Ícono de una sección o acción: si subiste assets/iconos/<nombre_base>.*
+    lo muestra, si no cae al emoji de respaldo — mismo patrón que
+    icono_familia_html, pero para cualquier ícono de sección/acción."""
+    ruta = _buscar_imagen(f"assets/iconos/{nombre_base}")
+    if ruta:
+        return f"<img src='{_img_datauri(ruta)}' style='width:{tamano}px; height:{tamano}px; vertical-align:middle;' />"
+    return emoji_respaldo
+
+
+def franja_ondulada(titulo_html, subtitulo="", color="#5DADE2", tipo_onda=1):
+    """Franja de color arriba de todo, con un borde ondulado abajo. Usa
+    clip-path (recorta la forma directamente sobre el mismo div) en vez de
+    superponer un SVG aparte — más robusto, porque no depende de que nada
+    se superponga por encima de otra cosa (los contenedores propios de
+    Streamlit alrededor de cada st.markdown pueden recortar ese tipo de
+    superposición). tipo_onda (1/2/3) varía la curva, para que no sea
+    idéntica en todas las pantallas donde se usa."""
+    clip = _ONDAS.get(tipo_onda, _ONDAS[1])
+    subtitulo_html = f"<div style='margin-top:4px; opacity:0.92; font-size:0.85rem;'>{subtitulo}</div>" if subtitulo else ""
+    st.markdown(
+        f"""
+        <div style='background:{color}; margin:-3.2rem -1rem 0 -1rem; padding:20px 24px 55px 24px;
+                     color:white; clip-path:{clip};'>
+            <div style='font-size:1.2rem; font-weight:700; word-break:break-word;'>{titulo_html}</div>
+            {subtitulo_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def tarjeta_boton(icono_html_str, texto, key, nivel=1, ayuda=None, deshabilitado=False):
+    """Tarjeta con ícono + texto adentro de un recuadro con borde de color
+    (según el nivel de profundidad de navegación) y relieve — el botón real
+    vive dentro del mismo contenedor, sin su propio borde, para que se vea
+    como una sola pieza en vez de ícono y botón separados.
+    Devuelve True si se tocó (nunca True si deshabilitado=True). El CSS que
+    le da el estilo vive en app.py (se aplica una sola vez, de forma global)."""
+    key_completo = f"tbnv{nivel}_{key}"
+    with st.container(border=True, key=key_completo):
+        st.markdown(
+            f"<div style='text-align:center; font-size:30px; margin-bottom:2px;'>{icono_html_str}</div>",
+            unsafe_allow_html=True,
+        )
+        tocado = st.button(
+            texto, key=f"btn_{key_completo}", use_container_width=True,
+            help=ayuda, disabled=deshabilitado,
+        )
+    return tocado

@@ -12,7 +12,10 @@ import streamlit as st
 import datos_gases as dg
 from datos import get_secciones_ocultas, set_secciones_ocultas
 from datos_gases import GASES
-from ui_helpers import titulo_seccion, subtitulo_con_icono, fila_dos_lados, _buscar_imagen, _img_datauri
+from ui_helpers import (
+    titulo_seccion, subtitulo_con_icono, fila_dos_lados, _buscar_imagen, _img_datauri,
+    tarjeta_boton, NIVEL_COLORES, franja_ondulada, icono_seccion_html,
+)
 
 ESTADOS_LABEL = {
     "lleno": "✅ Lleno, en depósito",
@@ -93,26 +96,28 @@ def render_gases():
         if clave not in st.session_state:
             st.session_state[clave] = valor
 
-    top1, top2 = st.columns([1, 6])
-    with top1:
-        if st.button("← Menú", key="btn_volver_menu"):
-            if st.session_state.gases_editar_id:
-                st.session_state.gases_editar_id = None
-            elif st.session_state.gases_accion_gas:
-                st.session_state.gases_accion_gas = None
-            elif st.session_state.gases_accion_rapida:
-                st.session_state.gases_accion_rapida = None
-            elif st.session_state.gases_grupo:
-                st.session_state.gases_grupo = None
-            elif st.session_state.gases_linea_id:
-                st.session_state.gases_linea_id = None
-            elif st.session_state.gases_seccion:
-                st.session_state.gases_seccion = None
-            else:
-                st.session_state.familia_id = None
-            st.rerun()
-    with top2:
-        titulo_seccion("Gases Cromatográficos", _icono_gases_html())
+    franja_ondulada(
+        f"{_icono_gases_html()} Gases Cromatográficos",
+        subtitulo="Circuito de cilindros",
+        color=NIVEL_COLORES[0],
+        tipo_onda=3,
+    )
+    if st.button("← Menú", key="btn_volver_menu"):
+        if st.session_state.gases_editar_id:
+            st.session_state.gases_editar_id = None
+        elif st.session_state.gases_accion_gas:
+            st.session_state.gases_accion_gas = None
+        elif st.session_state.gases_accion_rapida:
+            st.session_state.gases_accion_rapida = None
+        elif st.session_state.gases_grupo:
+            st.session_state.gases_grupo = None
+        elif st.session_state.gases_linea_id:
+            st.session_state.gases_linea_id = None
+        elif st.session_state.gases_seccion:
+            st.session_state.gases_seccion = None
+        else:
+            st.session_state.familia_id = None
+        st.rerun()
 
     _mostrar_confirmacion()
 
@@ -167,16 +172,17 @@ def _render_inicio():
 
     st.markdown("**⚡ Tareas rápidas**")
     acciones_rapidas = [
-        ("cambiar", "🔄 Cambiar tubo"),
-        ("pedir", "📞 Pedir relleno"),
-        ("reclamo", "📞 Poner reclamo"),
-        ("confirmar", "✅ Confirmar retiro/canje"),
+        ("cambiar", "🔄", "Cambiar tubo"),
+        ("pedir", "📞", "Pedir relleno"),
+        ("reclamo", "📞", "Poner reclamo"),
+        ("confirmar", "✅", "Confirmar retiro/canje"),
     ]
     cols_rapidas = st.columns(2)
-    for idx, (clave_accion, etiqueta_accion) in enumerate(acciones_rapidas):
-        if cols_rapidas[idx % 2].button(etiqueta_accion, key=f"accion_rapida_{clave_accion}", use_container_width=True, type="primary"):
-            st.session_state.gases_accion_rapida = clave_accion
-            st.rerun()
+    for idx, (clave_accion, emoji, etiqueta_accion) in enumerate(acciones_rapidas):
+        with cols_rapidas[idx % 2]:
+            if tarjeta_boton(emoji, etiqueta_accion, key=f"accion_rapida_{clave_accion}", nivel=1):
+                st.session_state.gases_accion_rapida = clave_accion
+                st.rerun()
 
     st.divider()
     st.caption("Elegí qué querés hacer.")
@@ -184,19 +190,21 @@ def _render_inicio():
     ocultas_todas = get_secciones_ocultas(persona_actual)
     ocultas_gases = ocultas_todas.get("gases", [])
     secciones_gases = [
-        ("conectar", "🔌 Conectar/Desconectar"),
-        ("cilindros", "🔧 Gestión de tubos"),
-        ("historial", "📋 Historial"),
-        ("buscar", "🔍 Buscar circuito"),
-        ("graficos", "📊 Gráficos"),
+        ("conectar", "conectar", "🔌", "Conectar/Desconectar"),
+        ("cilindros", "gestion_tubos", "🔧", "Gestión de tubos"),
+        ("historial", "historial", "📋", "Historial"),
+        ("buscar", "buscar", "🔍", "Buscar circuito"),
+        ("graficos", "graficos", "📊", "Gráficos"),
     ]
     visibles = [s for s in secciones_gases if s[0] not in ocultas_gases]
     if visibles:
         cols_menu = st.columns(2)
-        for idx, (sid, label) in enumerate(visibles):
-            if cols_menu[idx % 2].button(label, use_container_width=True, key=f"gases_menu_{sid}"):
-                st.session_state.gases_seccion = sid
-                st.rerun()
+        for idx, (sid, icono_base, emoji, label) in enumerate(visibles):
+            with cols_menu[idx % 2]:
+                icono_html = icono_seccion_html(icono_base, tamano=40, emoji_respaldo=emoji)
+                if tarjeta_boton(icono_html, label, key=f"gases_menu_{sid}", nivel=1):
+                    st.session_state.gases_seccion = sid
+                    st.rerun()
     else:
         st.info("Ocultaste todas las secciones acá. Usá \"⚙️ Personalizar\" abajo para volver a mostrar alguna.")
 
@@ -205,7 +213,7 @@ def _render_inicio():
         elegidas = st.multiselect(
             "Secciones visibles", options=[s[0] for s in secciones_gases],
             default=[s[0] for s in secciones_gases if s[0] not in ocultas_gases],
-            format_func=lambda sid: next(s[1] for s in secciones_gases if s[0] == sid),
+            format_func=lambda sid: next(s[3] for s in secciones_gases if s[0] == sid),
             key="personalizar_gases",
         )
         if st.button("Guardar", key="personalizar_gases_guardar"):
@@ -351,17 +359,18 @@ def _render_cilindros():
 
     st.caption("Elegí qué grupo querés ver.")
     grupos = [
-        ("lleno", "📦 En depósito"),
-        ("vacio_sin_pedido", "🦯 Vacíos"),
-        ("vacio_con_pedido", "📞 Pedidos solicitados"),
-        ("en_relleno", "🔄 En el proveedor"),
+        ("lleno", "deposito", "📦", "En depósito"),
+        ("vacio_sin_pedido", "vacios", "🦯", "Vacíos"),
+        ("vacio_con_pedido", "pedidos_solicitados", "📞", "Pedidos solicitados"),
+        ("en_relleno", "en_proveedor", "🔄", "En el proveedor"),
     ]
     todos = dg.get_cilindros()
     cols = st.columns(2)
-    for idx, (clave, titulo_grupo) in enumerate(grupos):
+    for idx, (clave, icono_base, emoji, titulo_grupo) in enumerate(grupos):
         cantidad = len(_cilindros_del_grupo(clave))
         with cols[idx % 2]:
-            if st.button(f"{titulo_grupo} ({cantidad})", key=f"grupo_{clave}", use_container_width=True, type="primary"):
+            icono_html = icono_seccion_html(icono_base, tamano=40, emoji_respaldo=emoji)
+            if tarjeta_boton(icono_html, f"{titulo_grupo} ({cantidad})", key=f"grupo_{clave}", nivel=2):
                 st.session_state.gases_grupo = clave
                 st.rerun()
 

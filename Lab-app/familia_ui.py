@@ -30,6 +30,7 @@ from logica import (
 from ui_helpers import (
     titulo_seccion, subtitulo_con_icono, fila_dos_lados,
     fila_titulo_pictogramas, linea_marca, icono_familia_html, _buscar_imagen, _img_datauri,
+    tarjeta_boton, NIVEL_COLORES, franja_ondulada,
 )
 
 
@@ -150,7 +151,12 @@ def render_familia(familia_id):
     subseccion = st.session_state.subseccion_activa
     unica_familia = len([f for f in get_familias() if f["activo"]]) == 1
 
-    linea_marca(f"{NOMBRE_SOFTWARE} · LCyEE", tamano="1rem", tamano_logo=38)
+    franja_ondulada(
+        f"{icono_familia_html(fam, tamano=26)} {fam['nombre']}",
+        subtitulo=f"{NOMBRE_SOFTWARE} · LCyEE",
+        color=NIVEL_COLORES[0],
+        tipo_onda=2,
+    )
 
     if subseccion:
         label_volver = "← Menú"
@@ -174,8 +180,6 @@ def render_familia(familia_id):
         st.session_state.item_gestion_id = None
         st.session_state.stock_modo_gestion = None
         st.rerun()
-
-    titulo_seccion(fam["nombre"], icono_familia_html(fam, tamano=30))
 
     secciones_principales = [
         ("usar", "📲", "Usar"),
@@ -216,19 +220,14 @@ def render_familia(familia_id):
             return f"<img src='{_img_datauri(ruta)}' style='width:{tamano}px; height:{tamano}px;' />"
         return f"<span style='font-size:{tamano - 8}px;'>{emoji_respaldo}</span>"
 
-    def _menu_cuadrados(items, prefijo):
+    def _menu_cuadrados(items, prefijo, nivel):
         for fila_inicio in range(0, len(items), 2):
             par = items[fila_inicio:fila_inicio + 2]
             cols = st.columns(2)
             for col, (sec_id, icon, label) in zip(cols, par):
                 with col:
-                    with st.container(border=True, key=f"tile_{prefijo}_{sec_id}"):
-                        st.markdown(
-                            f"<div style='text-align:center; margin-bottom:6px; padding-top:6px;'>{_icono_seccion_html(sec_id, icon, tamano=52)}</div>",
-                            unsafe_allow_html=True,
-                        )
-                        if st.button(label, key=f"{prefijo}_{sec_id}", use_container_width=True, type="primary"):
-                            yield sec_id
+                    if tarjeta_boton(_icono_seccion_html(sec_id, icon, tamano=44), label, key=f"{prefijo}_{sec_id}", nivel=nivel):
+                        yield sec_id
 
     if seccion is None:
         persona_actual = st.session_state.analista_actual
@@ -238,7 +237,7 @@ def render_familia(familia_id):
 
         st.caption("Elegí qué querés hacer.")
         if secciones_visibles:
-            elegido = list(_menu_cuadrados(secciones_visibles, "sec"))
+            elegido = list(_menu_cuadrados(secciones_visibles, "sec", nivel=1))
             if elegido:
                 st.session_state.seccion_activa = elegido[0]
                 st.rerun()
@@ -269,7 +268,7 @@ def render_familia(familia_id):
 
             st.caption("Gestión de Laboratorio")
             if labo_visibles:
-                elegido = list(_menu_cuadrados(labo_visibles, "sub"))
+                elegido = list(_menu_cuadrados(labo_visibles, "sub", nivel=2))
                 if elegido:
                     st.session_state.subseccion_activa = elegido[0]
                     st.rerun()

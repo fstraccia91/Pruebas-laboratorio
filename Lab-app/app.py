@@ -39,6 +39,7 @@ from logica import (
 from ui_helpers import (
     _buscar_imagen, _img_datauri, icono_familia_html,
     linea_marca, titulo_seccion, fila_titulo_pictogramas,
+    NIVEL_COLORES, icono_seccion_html, franja_ondulada, tarjeta_boton,
 )
 from datos_gases import modulo_habilitado as gases_habilitado
 from gases_ui import render_gases
@@ -126,6 +127,87 @@ st.markdown("""
     /* Tarjetas (contenedores con borde) con esquinas más suaves */
     [data-testid="stVerticalBlockBorderWrapper"] {
         border-radius: 12px !important;
+    }
+
+    /* Ningún botón "primary" queda rojo (el color por defecto de Streamlit)
+       — se cambia una sola vez acá, para toda la app. Los botones dentro de
+       una tarjeta_boton (más abajo) tienen prioridad sobre esta regla. */
+    .stButton > button[kind="primary"] {
+        background-color: #14504A !important;
+        border-color: #14504A !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #0D3530 !important;
+        border-color: #0D3530 !important;
+    }
+
+    /* ---- Escalada de color por nivel de profundidad (tarjeta_boton) ----
+       Nivel 0: módulos · Nivel 1: secciones dentro de un módulo ·
+       Nivel 2: acciones dentro de una pantalla. */
+    div[class*="st-key-tbnv0_"] {
+        border: 2px solid #14504A !important;
+        border-radius: 14px !important;
+        box-shadow: 0 3px 0 #14504A, 0 4px 10px rgba(0,0,0,0.06) !important;
+        padding: 14px 10px !important;
+        transition: all 0.12s ease;
+    }
+    div[class*="st-key-tbnv0_"] .stButton > button {
+        border: none !important;
+        background: transparent !important;
+        color: #14504A !important;
+        box-shadow: none !important;
+    }
+    div[class*="st-key-tbnv0_"]:hover, div[class*="st-key-tbnv0_"]:active {
+        background: #14504A !important;
+        transform: translateY(2px);
+        box-shadow: 0 1px 0 #14504A, 0 2px 6px rgba(0,0,0,0.08) !important;
+    }
+    div[class*="st-key-tbnv0_"]:hover .stButton > button, div[class*="st-key-tbnv0_"]:active .stButton > button {
+        color: white !important;
+    }
+
+    div[class*="st-key-tbnv1_"] {
+        border: 2px solid #3D8577 !important;
+        border-radius: 14px !important;
+        box-shadow: 0 3px 0 #3D8577, 0 4px 10px rgba(0,0,0,0.06) !important;
+        padding: 14px 10px !important;
+        transition: all 0.12s ease;
+    }
+    div[class*="st-key-tbnv1_"] .stButton > button {
+        border: none !important;
+        background: transparent !important;
+        color: #3D8577 !important;
+        box-shadow: none !important;
+    }
+    div[class*="st-key-tbnv1_"]:hover, div[class*="st-key-tbnv1_"]:active {
+        background: #3D8577 !important;
+        transform: translateY(2px);
+        box-shadow: 0 1px 0 #3D8577, 0 2px 6px rgba(0,0,0,0.08) !important;
+    }
+    div[class*="st-key-tbnv1_"]:hover .stButton > button, div[class*="st-key-tbnv1_"]:active .stButton > button {
+        color: white !important;
+    }
+
+    div[class*="st-key-tbnv2_"] {
+        border: 2px solid #5DADE2 !important;
+        border-radius: 14px !important;
+        box-shadow: 0 3px 0 #5DADE2, 0 4px 10px rgba(0,0,0,0.06) !important;
+        padding: 14px 10px !important;
+        transition: all 0.12s ease;
+    }
+    div[class*="st-key-tbnv2_"] .stButton > button {
+        border: none !important;
+        background: transparent !important;
+        color: #2874A6 !important;
+        box-shadow: none !important;
+    }
+    div[class*="st-key-tbnv2_"]:hover, div[class*="st-key-tbnv2_"]:active {
+        background: #5DADE2 !important;
+        transform: translateY(2px);
+        box-shadow: 0 1px 0 #5DADE2, 0 2px 6px rgba(0,0,0,0.08) !important;
+    }
+    div[class*="st-key-tbnv2_"]:hover .stButton > button, div[class*="st-key-tbnv2_"]:active .stButton > button {
+        color: white !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -288,11 +370,15 @@ if "confirmacion_stock" not in st.session_state:
 
 
 def render_home():
-    linea_marca(f"{NOMBRE_SOFTWARE} · {VERSION_SOFTWARE}", tamano="1rem", tamano_logo=38)
+    franja_ondulada(
+        f"🧪 {NOMBRE_LABORATORIO}",
+        subtitulo=f"{NOMBRE_SOFTWARE} · {VERSION_SOFTWARE}",
+        color=NIVEL_COLORES[0],
+        tipo_onda=1,
+    )
     if st.button("👤 Cambiar de persona", key="btn_volver_menu"):
         st.session_state.analista_actual = None
         st.rerun()
-    titulo_seccion(NOMBRE_LABORATORIO, "🧪")
 
     hay_gases = gases_habilitado()
 
@@ -301,31 +387,19 @@ def render_home():
     cols = st.columns(total_botones)
     for idx, fam in enumerate(familias):
         with cols[idx]:
-            st.markdown(
-                f"<div style='text-align:center; font-size:28px; margin-bottom:2px;'>{icono_familia_html(fam, tamano=36)}</div>",
-                unsafe_allow_html=True,
-            )
-            if fam["activo"]:
-                if st.button(fam["nombre"], use_container_width=True, type="primary"):
-                    st.session_state.familia_id = fam["id"]
-                    st.session_state.seccion_activa = None
-                    st.session_state.subseccion_activa = None
-                    st.rerun()
-            else:
-                st.button(fam["nombre"], use_container_width=True, disabled=True)
+            if tarjeta_boton(
+                icono_familia_html(fam, tamano=32), fam["nombre"],
+                key=f"fam_{fam['id']}", nivel=0, deshabilitado=not fam["activo"],
+            ):
+                st.session_state.familia_id = fam["id"]
+                st.session_state.seccion_activa = None
+                st.session_state.subseccion_activa = None
+                st.rerun()
 
     if hay_gases:
         with cols[len(familias)]:
-            ruta_gases = _buscar_imagen("assets/iconos/familia_gases")
-            if ruta_gases:
-                icono_gases_html = f"<img src='{_img_datauri(ruta_gases)}' style='width:36px; height:36px; vertical-align:middle;' />"
-            else:
-                icono_gases_html = "🛢️"
-            st.markdown(
-                f"<div style='text-align:center; font-size:28px; margin-bottom:2px;'>{icono_gases_html}</div>",
-                unsafe_allow_html=True,
-            )
-            if st.button("Gases Cromatográficos", use_container_width=True, type="primary"):
+            icono_gases = icono_seccion_html("familia_gases", tamano=32, emoji_respaldo="🛢️")
+            if tarjeta_boton(icono_gases, "Gases Cromatográficos", key="gases_home", nivel=0):
                 st.session_state.familia_id = "__gases__"
                 st.rerun()
 
