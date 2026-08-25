@@ -17,9 +17,9 @@ from ui_helpers import titulo_seccion, subtitulo_con_icono, fila_dos_lados, _bus
 ESTADOS_LABEL = {
     "lleno": "✅ Lleno, en depósito",
     "conectado": "🔌 Conectado",
-    "vacio": "📤 Vacío, pendiente de enviar",
+    "vacio": "📤 Vacío, pendiente",
     "en_relleno": "🔄 En el proveedor (rellenando)",
-    "retirado": "🚫 Retirado",
+    "retirado": "🚫 Dado de baja",
 }
 
 MODALIDAD_LABEL = {"propio": "Propio", "alquiler": "Alquiler"}
@@ -28,9 +28,11 @@ TIPO_LABEL = {
     "nuevo_ingreso": ("🆕 Alta", "Puesto por"),
     "conectado": ("🔌 Conectado", "Conectado por"),
     "desconectado": ("🔌 Desconectado", "Sacado por"),
+    "pedido": ("📞 Pedido realizado", "Pedido por"),
     "enviado_a_rellenar": ("📤 Enviado a rellenar", "Enviado por"),
     "recibido_de_relleno": ("📥 Recibido de relleno", "Recibido por"),
-    "retirado": ("🚫 Retirado", "Retirado por"),
+    "canje": ("🔄 Canje de alquiler", "Canjeado por"),
+    "retirado": ("🚫 Dado de baja", "Dado de baja por"),
     "correccion": ("🔧 Corrección", "Corregido por"),
     "remito_actualizado": ("🧾 Remito actualizado", "Actualizado por"),
     "reclamo": ("📞 Reclamo al proveedor", "Reclamado por"),
@@ -40,8 +42,10 @@ COLOR_TIPO = {
     "nuevo_ingreso": "#5C6B67",
     "conectado": "#2E7D32",
     "desconectado": "#8A8A8A",
+    "pedido": "#8E24AA",
     "enviado_a_rellenar": "#C97A2B",
     "recibido_de_relleno": "#1565C0",
+    "canje": "#1565C0",
     "retirado": "#A6362B",
     "correccion": "#8E24AA",
     "remito_actualizado": "#1565C0",
@@ -108,8 +112,12 @@ def render_gases():
 
     _mostrar_confirmacion()
 
-    if st.session_state.gases_linea_id:
+    if st.session_state.gases_editar_id:
+        _render_editar_cilindro(st.session_state.gases_editar_id)
+    elif st.session_state.gases_linea_id:
         _render_gestionar_linea(st.session_state.gases_linea_id)
+    elif st.session_state.gases_seccion == "conectar":
+        _render_conectar_desconectar()
     elif st.session_state.gases_seccion == "cilindros":
         _render_cilindros()
     elif st.session_state.gases_seccion == "historial":
@@ -141,49 +149,22 @@ def _render_inicio():
         texto = " · ".join(f"{_etiqueta_cilindro(c)} (hace {dias} días)" for c, dias in alertas_demora)
         st.warning(f"⏰ Hace más de un mes en el proveedor, conviene consultar: {texto}")
 
-    st.caption("Estado actual de cada línea. El color de arriba de cada tarjeta es el color de identificación de ese gas, según la norma IRAM.")
-    lineas = dg.get_lineas()
-    cols = st.columns(2)
-    for idx, l in enumerate(lineas):
-        with cols[idx % 2]:
-            color_gas = COLOR_GAS_IRAM.get(l["gas"], "#5C6B67")
-            cil = l.get("cilindro_actual")
-            if cil:
-                info_html = (
-                    f"<span style='font-weight:600; font-size:0.95rem;'>{l['nombre']}</span><br>"
-                    f"<span style='color:#5C6B67; font-size:0.85rem;'>{_etiqueta_cilindro(cil)}</span>"
-                )
-            else:
-                info_html = (
-                    f"<span style='font-weight:600; font-size:0.95rem;'>{l['nombre']}</span><br>"
-                    f"<span style='color:#A6362B; font-size:0.85rem;'>Sin cilindro conectado</span>"
-                )
-            st.markdown(
-                f"<div style='border:1px solid #E0E0E0; border-radius:8px; overflow:hidden; margin-bottom:8px;'>"
-                f"<div style='height:6px; background:{color_gas};'></div>"
-                f"<div style='padding:12px;'>{info_html}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-            if st.button("Gestionar", key=f"gestionar_linea_{l['id']}", use_container_width=True, type="primary"):
-                st.session_state.gases_linea_id = l["id"]
-                st.rerun()
-
-    st.divider()
+    st.caption("Elegí qué querés hacer.")
     persona_actual = st.session_state.analista_actual
     ocultas_todas = get_secciones_ocultas(persona_actual)
     ocultas_gases = ocultas_todas.get("gases", [])
     secciones_gases = [
-        ("cilindros", "🛢️ Cilindros"),
+        ("conectar", "🔌 Conectar/Desconectar"),
+        ("cilindros", "🔧 Gestión de tubos"),
         ("historial", "📋 Historial"),
         ("buscar", "🔍 Buscar circuito"),
         ("graficos", "📊 Gráficos"),
     ]
     visibles = [s for s in secciones_gases if s[0] not in ocultas_gases]
     if visibles:
-        cols_menu = st.columns(len(visibles))
-        for col, (sid, label) in zip(cols_menu, visibles):
-            if col.button(label, use_container_width=True, key=f"gases_menu_{sid}"):
+        cols_menu = st.columns(2)
+        for idx, (sid, label) in enumerate(visibles):
+            if cols_menu[idx % 2].button(label, use_container_width=True, key=f"gases_menu_{sid}"):
                 st.session_state.gases_seccion = sid
                 st.rerun()
     else:
@@ -201,6 +182,36 @@ def _render_inicio():
             nuevas_ocultas = [s[0] for s in secciones_gases if s[0] not in elegidas]
             set_secciones_ocultas(persona_actual, "gases", nuevas_ocultas)
             st.rerun()
+
+
+def _render_conectar_desconectar():
+    st.caption(
+        "Elegí el gas para conectar o desconectar un tubo en su línea. "
+        "El color de arriba de cada tarjeta es el color de identificación de ese gas, según la norma IRAM."
+    )
+    lineas = dg.get_lineas()
+    cols = st.columns(2)
+    for idx, l in enumerate(lineas):
+        with cols[idx % 2]:
+            color_gas = COLOR_GAS_IRAM.get(l["gas"], "#5C6B67")
+            cil = l.get("cilindro_actual")
+            if cil:
+                info_html = f"<span style='color:#5C6B67; font-size:0.85rem;'>{_etiqueta_cilindro(cil)}</span>"
+            else:
+                info_html = "<span style='color:#A6362B; font-size:0.85rem;'>Sin cilindro conectado</span>"
+            st.markdown(
+                f"<div style='border:1px solid #E0E0E0; border-radius:8px; overflow:hidden; margin-bottom:4px;'>"
+                f"<div style='height:6px; background:{color_gas};'></div>"
+                f"<div style='padding:10px 12px;'>{info_html}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button(l["gas"], key=f"linea_btn_{l['id']}", use_container_width=True, type="primary"):
+                st.session_state.gases_linea_id = l["id"]
+                st.rerun()
+            if cil and st.button("✏️ Editar tubo conectado", key=f"editar_desde_linea_{l['id']}", use_container_width=True):
+                st.session_state.gases_editar_id = cil["id"]
+                st.rerun()
 
 
 def _render_gestionar_linea(linea_id):
@@ -234,7 +245,7 @@ def _render_gestionar_linea(linea_id):
                 _confirmar(f"✅ Cilindro desconectado de {linea['nombre']} — queda vacío, pendiente de enviar a rellenar.")
                 st.rerun()
             st.caption(
-                "El paso de \"ya lo mandé a rellenar\" se hace aparte, desde 🛢️ Cilindros, "
+                "El pedido al proveedor y el envío/canje se hacen aparte, desde 🔧 Gestión de tubos, "
                 "recién cuando el cilindro salga de verdad del laboratorio."
             )
 
@@ -245,7 +256,7 @@ def _render_gestionar_linea(linea_id):
     st.markdown("**🔄 Conectar otro cilindro a esta línea**")
     disponibles = dg.get_cilindros(gas=linea["gas"], estado="lleno")
     if not disponibles:
-        st.caption("No hay cilindros llenos disponibles para este gas. Dá de alta uno nuevo en \"🛢️ Cilindros\".")
+        st.caption("No hay cilindros llenos disponibles para este gas. Dá de alta uno nuevo en \"🔧 Gestión de tubos\".")
     else:
         opciones = {_etiqueta_cilindro(c): c for c in disponibles}
         elegido = st.selectbox("Elegí el cilindro", list(opciones.keys()), key=f"elegir_cil_{linea_id}")
@@ -257,17 +268,24 @@ def _render_gestionar_linea(linea_id):
             st.rerun()
 
 
-def _render_cilindros():
-    if st.session_state.gases_editar_id:
-        _render_editar_cilindro(st.session_state.gases_editar_id)
-        return
+def _cilindros_del_grupo(grupo):
+    """Traduce los 4 grupos visuales de 'Gestión de tubos' a cilindros
+    reales — 'vacio_sin_pedido'/'vacio_con_pedido' son ambos estado='vacio'
+    por dentro, separados según si ya tienen un pedido activo o no."""
+    if grupo == "vacio_sin_pedido":
+        return [c for c in dg.get_cilindros(estado="vacio") if dg.pedido_activo(c["id"]) is None]
+    if grupo == "vacio_con_pedido":
+        return [c for c in dg.get_cilindros(estado="vacio") if dg.pedido_activo(c["id"]) is not None]
+    return dg.get_cilindros(estado=grupo)
 
+
+def _render_cilindros():
     if st.session_state.gases_grupo:
         _render_grupo_completo(st.session_state.gases_grupo)
         return
 
     with st.expander("➕ Nuevo cilindro"):
-        st.caption("El certificado no se carga acá — llega recién cuando el proveedor devuelve el cilindro rellenado (📦 En depósito → 🔄 En el proveedor → \"Recibido de relleno\").")
+        st.caption("Si el tubo ya existía y ya tiene un remito de su última carga, lo podés cargar acá mismo.")
         c1, c2, c3 = st.columns(3)
         gas = c1.selectbox("Gas", GASES, key="new_cil_gas")
         capacidad = c2.selectbox("Capacidad", [7, 9], format_func=lambda v: f"{v} m³", key="new_cil_cap")
@@ -278,14 +296,16 @@ def _render_cilindros():
             id_interno = st.text_input("ID interno del cilindro", key="new_cil_idint")
         else:
             proveedor = st.text_input("Proveedor / empresa de alquiler", key="new_cil_prov")
+        remito_inicial = st.text_input("N° de remito actual (opcional)", key="new_cil_remito")
 
         if st.button("Guardar cilindro", key="new_cil_guardar", type="primary"):
             dg.add_cilindro(
                 gas, capacidad, modalidad, st.session_state.analista_actual,
                 id_interno=(id_interno.strip() or None) if id_interno else None,
                 proveedor=(proveedor.strip() or None) if proveedor else None,
+                remito=remito_inicial.strip() or None,
             )
-            for k in ["new_cil_gas", "new_cil_cap", "new_cil_modalidad", "new_cil_idint", "new_cil_prov"]:
+            for k in ["new_cil_gas", "new_cil_cap", "new_cil_modalidad", "new_cil_idint", "new_cil_prov", "new_cil_remito"]:
                 st.session_state.pop(k, None)
             _confirmar("✅ Cilindro dado de alta, disponible en depósito.")
             st.rerun()
@@ -293,14 +313,14 @@ def _render_cilindros():
     st.caption("Elegí qué grupo querés ver.")
     grupos = [
         ("lleno", "📦 En depósito"),
-        ("vacio", "📤 Pedir relleno"),
+        ("vacio_sin_pedido", "🦯 Vacíos"),
+        ("vacio_con_pedido", "📞 Pedidos solicitados"),
         ("en_relleno", "🔄 En el proveedor"),
-        ("conectado", "🔌 Conectados"),
     ]
     todos = dg.get_cilindros()
     cols = st.columns(2)
     for idx, (clave, titulo_grupo) in enumerate(grupos):
-        cantidad = len([c for c in todos if c["estado"] == clave])
+        cantidad = len(_cilindros_del_grupo(clave))
         with cols[idx % 2]:
             if st.button(f"{titulo_grupo} ({cantidad})", key=f"grupo_{clave}", use_container_width=True, type="primary"):
                 st.session_state.gases_grupo = clave
@@ -321,19 +341,17 @@ def _render_cilindros():
 
 
 def _render_grupo_completo(grupo):
-    """Listado directo de todos los cilindros de un grupo (En depósito,
-    Pedir relleno, En el proveedor, Conectados), con un filtro de gas de
-    multi-selección (igual formato que elegir riesgos GHS en Solventes) en
-    vez de un botón por gas — y ordenado por última modificación, más
-    reciente primero, mostrando fecha y quién."""
+    """Listado directo de todos los cilindros de un grupo, con un filtro de
+    gas de multi-selección (igual formato que elegir riesgos GHS en
+    Solventes) — ordenado por última modificación, más reciente primero."""
     titulos = {
-        "lleno": "📦 En depósito", "vacio": "📤 Pedir relleno",
-        "en_relleno": "🔄 En el proveedor", "conectado": "🔌 Conectados",
+        "lleno": "📦 En depósito", "vacio_sin_pedido": "🦯 Vacíos",
+        "vacio_con_pedido": "📞 Pedidos solicitados", "en_relleno": "🔄 En el proveedor",
     }
     subtitulo_con_icono(titulos[grupo], "")
 
     gases_sel = st.multiselect("Gas", GASES, default=GASES, key=f"filtro_gas_{grupo}")
-    cilindros_grupo = [c for c in dg.get_cilindros(estado=grupo) if c["gas"] in gases_sel]
+    cilindros_grupo = [c for c in _cilindros_del_grupo(grupo) if c["gas"] in gases_sel]
 
     anotados = []
     for c in cilindros_grupo:
@@ -351,14 +369,27 @@ def _render_grupo_completo(grupo):
             izq = f"<span style='font-weight:600;'>{_etiqueta_cilindro(c)}</span>"
             fila_dos_lados(izq, "")
 
-            if grupo == "en_relleno":
+            if grupo == "vacio_con_pedido":
+                pedido = dg.pedido_activo(c["id"])
+                if pedido:
+                    st.caption(
+                        f"📞 Pedido N° {pedido.get('numero_pedido') or '—'} — "
+                        f"por {pedido.get('analista') or '—'} · {pedido['fecha'][:16].replace('T', ' ')}"
+                    )
+                reclamos = dg.reclamos_activos(c["id"])
+                if reclamos:
+                    with st.expander(f"📞 {len(reclamos)} reclamo{'s' if len(reclamos) != 1 else ''} en este pedido"):
+                        for r in reclamos:
+                            st.markdown(f"**{r['fecha'][:16].replace('T', ' ')}** — {r.get('motivo') or 'sin motivo'}")
+                            st.caption(f"Por {r.get('analista') or '—'}" + (f" · {r['nota']}" if r.get('nota') else ""))
+            elif grupo == "en_relleno":
                 remito_envio_actual = dg.remito_envio_vigente(c["id"])
                 if remito_envio_actual:
                     st.caption(f"🧾 Remito de devolución (este viaje): {remito_envio_actual}")
-                reclamos_envio = dg.reclamos_de_este_envio(c["id"])
-                if reclamos_envio:
-                    with st.expander(f"📞 {len(reclamos_envio)} reclamo{'s' if len(reclamos_envio) != 1 else ''} en este viaje"):
-                        for r in reclamos_envio:
+                reclamos = dg.reclamos_activos(c["id"])
+                if reclamos:
+                    with st.expander(f"📞 {len(reclamos)} reclamo{'s' if len(reclamos) != 1 else ''} en este viaje"):
+                        for r in reclamos:
                             st.markdown(f"**{r['fecha'][:16].replace('T', ' ')}** — {r.get('motivo') or 'sin motivo'}")
                             st.caption(f"Por {r.get('analista') or '—'}" + (f" · {r['nota']}" if r.get('nota') else ""))
             elif c.get("remito_actual"):
@@ -369,17 +400,49 @@ def _render_grupo_completo(grupo):
                 st.caption(f"{quien_label}: {ultimo.get('analista') or '—'} · {ultimo['fecha'][:16].replace('T', ' ')}")
 
             cc1, cc2, cc3 = st.columns(3)
-            if grupo == "vacio":
-                remito_envio = st.text_input(
-                    "N° de remito de devolución (obligatorio)", key=f"remito_envio_{c['id']}",
-                    help="Es el ID del retiro — sirve para reclamarle al proveedor si hace falta.",
-                )
-                if cc1.button("📤 Confirmar que se envió", key=f"enviar_{c['id']}"):
-                    if not remito_envio.strip():
-                        st.error("Ingresá el N° de remito de devolución antes de confirmar.")
+
+            if grupo == "vacio_sin_pedido":
+                numero_pedido = st.text_input("N° de pedido (obligatorio)", key=f"num_pedido_{c['id']}")
+                if cc1.button("📞 Registrar pedido", key=f"pedido_{c['id']}"):
+                    if not numero_pedido.strip():
+                        st.error("Ingresá el N° de pedido antes de confirmar.")
                     else:
-                        dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual, remito_envio.strip())
-                        _confirmar(f"✅ {_etiqueta_cilindro(c)} marcado como enviado al proveedor (remito {remito_envio.strip()}).")
+                        dg.registrar_pedido(c["id"], st.session_state.analista_actual, numero_pedido.strip())
+                        _confirmar(f"✅ Pedido registrado para {_etiqueta_cilindro(c)}.")
+                        st.rerun()
+
+            if grupo == "vacio_con_pedido":
+                if c.get("modalidad") == "alquiler":
+                    remito_canje = st.text_input("N° de remito del canje (obligatorio)", key=f"remito_canje_{c['id']}")
+                    if cc1.button("🔄 Confirmar canje", key=f"canje_{c['id']}"):
+                        if not remito_canje.strip():
+                            st.error("Ingresá el N° de remito antes de confirmar.")
+                        else:
+                            dg.confirmar_canje(c["id"], st.session_state.analista_actual, remito_canje.strip())
+                            _confirmar(f"✅ {_etiqueta_cilindro(c)} canjeado (remito {remito_canje.strip()}) — de vuelta en depósito, lleno.")
+                            st.rerun()
+                else:
+                    remito_envio = st.text_input(
+                        "N° de remito de devolución (obligatorio)", key=f"remito_envio_{c['id']}",
+                        help="Es el ID del retiro — sirve para reclamarle al proveedor si hace falta.",
+                    )
+                    if cc1.button("📤 Confirmar que se envió", key=f"enviar_{c['id']}"):
+                        if not remito_envio.strip():
+                            st.error("Ingresá el N° de remito de devolución antes de confirmar.")
+                        else:
+                            dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual, remito_envio.strip())
+                            _confirmar(f"✅ {_etiqueta_cilindro(c)} marcado como enviado al proveedor (remito {remito_envio.strip()}).")
+                            st.rerun()
+
+                if cc2.button("📞 Registrar reclamo", key=f"reclamo_{c['id']}"):
+                    st.session_state[f"mostrar_reclamo_{c['id']}"] = True
+                if st.session_state.get(f"mostrar_reclamo_{c['id']}"):
+                    motivo_reclamo = st.selectbox("Motivo", dg.MOTIVOS_RECLAMO, key=f"motivo_reclamo_{c['id']}")
+                    nota_reclamo = st.text_input("Nota (opcional)", key=f"nota_reclamo_{c['id']}")
+                    if st.button("Confirmar reclamo", key=f"confirmar_reclamo_{c['id']}", type="primary"):
+                        dg.registrar_reclamo(c["id"], st.session_state.analista_actual, motivo_reclamo, nota=nota_reclamo)
+                        st.session_state[f"mostrar_reclamo_{c['id']}"] = False
+                        _confirmar(f"✅ Reclamo registrado para {_etiqueta_cilindro(c)}.")
                         st.rerun()
 
             if grupo == "en_relleno":
@@ -396,30 +459,33 @@ def _render_grupo_completo(grupo):
                             _confirmar(f"✅ {_etiqueta_cilindro(c)} de vuelta en depósito, lleno (remito {remito_recepcion.strip()}).")
                             st.rerun()
 
-                if cc2.button("📞 Registrar reclamo", key=f"reclamo_{c['id']}"):
-                    st.session_state[f"mostrar_reclamo_{c['id']}"] = True
-                if st.session_state.get(f"mostrar_reclamo_{c['id']}"):
-                    motivo_reclamo = st.selectbox(
-                        "Motivo", dg.MOTIVOS_RECLAMO, key=f"motivo_reclamo_{c['id']}",
-                    )
-                    nota_reclamo = st.text_input("Nota (opcional)", key=f"nota_reclamo_{c['id']}")
-                    if st.button("Confirmar reclamo", key=f"confirmar_reclamo_{c['id']}", type="primary"):
-                        dg.registrar_reclamo(c["id"], st.session_state.analista_actual, motivo_reclamo, nota=nota_reclamo)
-                        st.session_state[f"mostrar_reclamo_{c['id']}"] = False
+                if cc2.button("📞 Registrar reclamo", key=f"reclamo_er_{c['id']}"):
+                    st.session_state[f"mostrar_reclamo_er_{c['id']}"] = True
+                if st.session_state.get(f"mostrar_reclamo_er_{c['id']}"):
+                    motivo_reclamo_er = st.selectbox("Motivo", dg.MOTIVOS_RECLAMO, key=f"motivo_reclamo_er_{c['id']}")
+                    nota_reclamo_er = st.text_input("Nota (opcional)", key=f"nota_reclamo_er_{c['id']}")
+                    if st.button("Confirmar reclamo", key=f"confirmar_reclamo_er_{c['id']}", type="primary"):
+                        dg.registrar_reclamo(c["id"], st.session_state.analista_actual, motivo_reclamo_er, nota=nota_reclamo_er)
+                        st.session_state[f"mostrar_reclamo_er_{c['id']}"] = False
                         _confirmar(f"✅ Reclamo registrado para {_etiqueta_cilindro(c)}.")
                         st.rerun()
 
-            if grupo in ("lleno", "vacio", "en_relleno") and cc2.button("🚫 Retirar", key=f"retirar_{c['id']}"):
-                st.session_state[f"confirmar_retiro_{c['id']}"] = True
-            if st.session_state.get(f"confirmar_retiro_{c['id']}"):
-                st.warning("Esto es definitivo: significa que el cilindro no vuelve más al sistema (se devolvió o se dio de baja). No tiene que ver con sacarlo de una línea — para eso está \"Desconectar\", en la pantalla de cada línea.")
-                if st.button("Sí, retirar definitivamente", key=f"confirmar_retiro_btn_{c['id']}", type="primary"):
+            fila2a, fila2b = st.columns(2)
+            if fila2a.button("🚫 Dar de baja cilindro", key=f"baja_{c['id']}"):
+                st.session_state[f"confirmar_baja_{c['id']}"] = True
+            if st.session_state.get(f"confirmar_baja_{c['id']}"):
+                st.warning(
+                    "Esto es definitivo: significa que el cilindro no vuelve más al sistema (se devolvió o se dio "
+                    "de baja). No tiene que ver con que el proveedor venga a buscarlo — para eso están los otros "
+                    "botones de esta pantalla, ni con sacarlo de una línea — para eso está \"Desconectar\"."
+                )
+                if st.button("Sí, dar de baja definitivamente", key=f"confirmar_baja_btn_{c['id']}", type="primary"):
                     dg.retirar_cilindro(c["id"], st.session_state.analista_actual)
-                    st.session_state[f"confirmar_retiro_{c['id']}"] = False
-                    _confirmar(f"✅ {_etiqueta_cilindro(c)} retirado.")
+                    st.session_state[f"confirmar_baja_{c['id']}"] = False
+                    _confirmar(f"✅ {_etiqueta_cilindro(c)} dado de baja.")
                     st.rerun()
 
-            if cc3.button("✏️ Editar", key=f"editar_{c['id']}"):
+            if fila2b.button("✏️ Editar", key=f"editar_{c['id']}"):
                 st.session_state.gases_editar_id = c["id"]
                 st.rerun()
 
@@ -486,7 +552,7 @@ def _render_editar_cilindro(cilindro_id):
 CATEGORIAS_HISTORIAL = {
     "Todos": None,
     "Conexiones": {"conectado", "desconectado"},
-    "Proveedor": {"enviado_a_rellenar", "recibido_de_relleno", "reclamo"},
+    "Proveedor": {"pedido", "enviado_a_rellenar", "recibido_de_relleno", "canje", "reclamo"},
     "Altas y bajas": {"nuevo_ingreso", "retirado"},
     "Correcciones": {"correccion", "remito_actualizado"},
 }
@@ -592,11 +658,15 @@ def _tarjeta_movimiento(m, lineas_por_id, cilindro_id):
     etiqueta_remito = "Remito"
     if m.get("remito_envio"):
         etiqueta_remito = "Remito de devolución"
+    elif m["tipo"] == "canje":
+        etiqueta_remito = "Remito de canje"
     if not remito_mostrar:
         if m["tipo"] == "reclamo":
-            # Un reclamo se hace mientras el cilindro está en el proveedor —
+            # Un reclamo se hace mientras el cilindro está esperando al
+            # proveedor (con pedido registrado, o ya en el proveedor) —
             # corresponde al remito de DEVOLUCIÓN de ese viaje, no al de
-            # recepción de la carga anterior (ya usada).
+            # recepción de la carga anterior (ya usada). Si el reclamo fue
+            # antes de que existiera remito de envío, no hay nada que mostrar.
             remito_mostrar = dg.remito_envio_vigente_en(cilindro_id, m["fecha"])
             etiqueta_remito = "Remito de devolución"
         else:
@@ -608,6 +678,8 @@ def _tarjeta_movimiento(m, lineas_por_id, cilindro_id):
 
     partes_html = [f"<div style='font-weight:600;'>{titulo_tipo}</div>"]
     partes_html.append(f"<div style='color:#5C6B67; font-size:0.85rem;'>{detalle}</div>")
+    if m.get("numero_pedido"):
+        partes_html.append(f"<div style='color:#5C6B67; font-size:0.8rem; margin-top:2px;'>N° de pedido: {m['numero_pedido']}</div>")
     if m.get("motivo"):
         partes_html.append(f"<div style='color:#5C6B67; font-size:0.8rem; margin-top:2px;'>Motivo: {m['motivo']}</div>")
     if m.get("nota"):

@@ -61,20 +61,21 @@ def get_cilindro(cilindro_id):
     return res[0] if res else None
 
 
-def add_cilindro(gas, capacidad, modalidad, analista, id_interno=None, proveedor=None):
+def add_cilindro(gas, capacidad, modalidad, analista, id_interno=None, proveedor=None, remito=None):
     """Da de alta un cilindro nuevo. Arranca 'lleno' (se asume que llega con
     gas — si no fuera así, se puede corregir el estado después).
-    El remito NO se pide acá: llega recién cuando el proveedor devuelve
-    el cilindro rellenado (ver recibir_de_relleno) — no en el alta."""
+    El remito es opcional acá: para un cilindro que recién arranca no hace
+    falta, pero si estás dando de alta un tubo real que ya tenía historia y
+    ya sabés cuál es su remito actual, lo podés cargar en el momento."""
     sb = get_client()
     cilindro_id = str(uuid.uuid4())
     sb.table("cilindros").insert({
         "id": cilindro_id, "gas": gas, "capacidad": capacidad, "modalidad": modalidad,
         "id_interno": id_interno, "proveedor": proveedor, "estado": "lleno",
-        "remito_actual": None,
+        "remito_actual": remito,
         "creado": datetime.now().isoformat(), "creado_por": analista,
     }).execute()
-    _registrar_movimiento(cilindro_id, "nuevo_ingreso", analista, nota="Alta de cilindro nuevo")
+    _registrar_movimiento(cilindro_id, "nuevo_ingreso", analista, nota="Alta de cilindro nuevo", remito_recepcion=remito)
     return cilindro_id
 
 
@@ -176,6 +177,38 @@ def registrar_reclamo(cilindro_id, analista, motivo, nota=""):
     _registrar_movimiento(cilindro_id, "reclamo", analista, nota=nota, motivo=motivo)
 
 
+def registrar_pedido(cilindro_id, analista, numero_pedido, nota=""):
+    """Registra que se llamó al proveedor pidiendo el retiro (Propio) o el
+    canje (Alquiler) — antes de que exista ningún remito. El cilindro sigue
+    'vacío' hasta que efectivamente lo retiren/cambien; esto es solo un
+    seguimiento de que ya se hizo el llamado, con su número de pedido."""
+    _registrar_movimiento(cilindro_id, "pedido", analista, nota=nota, numero_pedido=numero_pedido)
+
+
+def pedido_activo(cilindro_id):
+    """El pedido más reciente sin cerrar (sin envío/canje posterior) para
+    este cilindro, o None si no tiene ninguno pendiente ahora mismo."""
+    hist = sorted(get_historial(cilindro_id=cilindro_id, limite=50), key=lambda h: h["fecha"], reverse=True)
+    for h in hist:
+        if h.get("anulado"):
+            continue
+        if h["tipo"] == "pedido":
+            return h
+        if h["tipo"] in ("enviado_a_rellenar", "canje"):
+            return None
+    return None
+
+
+def confirmar_canje(cilindro_id, analista, remito):
+    """Para tubos de ALQUILER: el proveedor viene y directamente cambia el
+    tubo vacío por uno lleno con remito nuevo — no se manda a esperar, es un
+    canje inmediato, así que salta derecho a 'lleno' sin pasar por
+    'en_relleno'."""
+    sb = get_client()
+    sb.table("cilindros").update({"estado": "lleno", "remito_actual": remito}).eq("id", cilindro_id).execute()
+    _registrar_movimiento(cilindro_id, "canje", analista, remito_recepcion=remito)
+
+
 def ultimo_reclamo(cilindro_id):
     """El reclamo más reciente hecho sobre este cilindro (o None si nunca
     se reclamó) — para mostrar en la tarjeta de 'En el proveedor'."""
@@ -184,15 +217,24 @@ def ultimo_reclamo(cilindro_id):
     return reclamos[0] if reclamos else None
 
 
-def reclamos_de_este_envio(cilindro_id):
-    """Todos los reclamos hechos durante la estadía ACTUAL en el proveedor
-    (desde el último 'enviado_a_rellenar' hasta ahora) — no trae reclamos
-    de vueltas anteriores al proveedor. Devuelve los más recientes primero."""
+def reclamos_activos(cilindro_id):
+    """Todos los reclamos hechos desde que se abrió la espera actual — un
+    'pedido' registrado, que sigue siendo el punto de apertura aunque
+    después haya un envío a rellenar (no es un cierre, es una continuación
+    del mismo ciclo) — hasta el cierre real (recibido de relleno o canje).
+    Sin mezclar con reclamos de ciclos anteriores. Más recientes primero."""
     hist = sorted(get_historial(cilindro_id=cilindro_id, limite=500), key=lambda h: h["fecha"])
-    indices_envio = [i for i, h in enumerate(hist) if h["tipo"] == "enviado_a_rellenar" and not h.get("anulado")]
-    if not indices_envio:
+    tipos_cierre = {"recibido_de_relleno", "canje"}
+    indices_cierre = [i for i, h in enumerate(hist) if h["tipo"] in tipos_cierre and not h.get("anulado")]
+    desde_idx = indices_cierre[-1] + 1 if indices_cierre else 0
+    tramo_actual = hist[desde_idx:]
+
+    indices_apertura = [i for i, h in enumerate(tramo_actual) if h["tipo"] == "pedido" and not h.get("anulado")]
+    if not indices_apertura:
+        indices_apertura = [i for i, h in enumerate(tramo_actual) if h["tipo"] == "enviado_a_rellenar" and not h.get("anulado")]
+    if not indices_apertura:
         return []
-    desde = hist[indices_envio[-1]:]
+    desde = tramo_actual[indices_apertura[-1]:]
     reclamos = [h for h in desde if h["tipo"] == "reclamo" and not h.get("anulado")]
     return list(reversed(reclamos))
 
@@ -305,7 +347,7 @@ def buscar_flexible(gas=None, id_interno=None, remito=None, modalidad=None):
 
     if remito and remito.strip():
         remito_normalizado = remito.strip().casefold()
-        tipos_inicio = {"recibido_de_relleno", "remito_actualizado"}
+        tipos_inicio = {"recibido_de_relleno", "remito_actualizado", "canje", "nuevo_ingreso"}
         for cilindro in candidatos_cilindros:
             historial = sorted(get_historial(cilindro_id=cilindro["id"], limite=500), key=lambda h: h["fecha"])
             idx_inicio = None
@@ -333,11 +375,11 @@ def buscar_flexible(gas=None, id_interno=None, remito=None, modalidad=None):
 
 def segmentar_por_ciclos(movimientos_asc):
     """Recibe los movimientos de UN cilindro, ya ordenados de más viejo a
-    más nuevo, y los agrupa en ciclos: cada ciclo arranca en un
-    'recibido_de_relleno'/'remito_actualizado' y termina justo antes del
-    siguiente. Lo que pasó antes del primer remito (el alta) queda como un
-    ciclo aparte, sin remito. Devuelve [(remito_o_None, [movimientos]), ...]."""
-    tipos_inicio = {"recibido_de_relleno", "remito_actualizado"}
+    más nuevo, y los agrupa en ciclos: cada ciclo arranca en un evento que
+    trae remito (alta con remito, recibido de relleno, canje de alquiler, o
+    una corrección manual de remito) y termina justo antes del siguiente.
+    Devuelve [(remito_o_None, [movimientos]), ...]."""
+    tipos_inicio = {"recibido_de_relleno", "remito_actualizado", "canje", "nuevo_ingreso"}
     ciclos = []
     remito_actual = None
     movs_actual = []
@@ -410,12 +452,12 @@ def duraciones_relleno(gas=None, modalidad=None):
     return resultado
 
 
-def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota="", remito_envio=None, remito_recepcion=None, motivo=None):
+def _registrar_movimiento(cilindro_id, tipo, analista, linea_id=None, nota="", remito_envio=None, remito_recepcion=None, motivo=None, numero_pedido=None):
     sb = get_client()
     sb.table("movimientos_cilindro").insert({
         "id": str(uuid.uuid4()), "cilindro_id": cilindro_id, "tipo": tipo,
         "linea_id": linea_id, "fecha": datetime.now().isoformat(),
-        "analista": analista, "nota": nota, "motivo": motivo,
+        "analista": analista, "nota": nota, "motivo": motivo, "numero_pedido": numero_pedido,
         "remito_envio": remito_envio, "remito_recepcion": remito_recepcion,
         "anulado": False, "anulado_por": None, "anulado_fecha": None, "anulado_motivo": None,
     }).execute()
