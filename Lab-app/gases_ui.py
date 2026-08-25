@@ -774,17 +774,17 @@ def _render_buscar_circuito():
             for m in movimientos_visibles:
                 _tarjeta_movimiento(m, lineas_por_id, cilindro["id"])
         else:
-            # Historial completo: agrupar por ciclo, el más reciente primero.
-            movimientos_asc = sorted(movimientos_visibles, key=lambda m: m["fecha"])
-            ciclos = dg.segmentar_por_ciclos(movimientos_asc)
-            for remito_ciclo, movs_ciclo in reversed(ciclos):
-                dias = dg._dias_desde(movs_ciclo[0]["fecha"])
-                etiqueta = f"🧾 Remito {remito_ciclo}" if remito_ciclo else "Antes del primer remito"
-                titulo_ciclo = f"{etiqueta} · {len(movs_ciclo)} movimiento{'s' if len(movs_ciclo) != 1 else ''}"
+            # Historial completo: agrupar por carga, la más reciente primero.
+            for remito_carga, movs_carga in dg.cargas_con_movimientos(cilindro["id"]):
+                if not movs_carga:
+                    continue
+                dias = dg._dias_desde(movs_carga[0]["fecha"])
+                etiqueta = f"🧾 Remito {remito_carga}" if remito_carga else "Antes del primer remito"
+                titulo_carga = f"{etiqueta} · {len(movs_carga)} movimiento{'s' if len(movs_carga) != 1 else ''}"
                 if dias is not None:
-                    titulo_ciclo += f" · hace {dias} día{'s' if dias != 1 else ''}"
-                with st.expander(titulo_ciclo):
-                    for m in movs_ciclo:
+                    titulo_carga += f" · hace {dias} día{'s' if dias != 1 else ''}"
+                with st.expander(titulo_carga):
+                    for m in movs_carga:
                         _tarjeta_movimiento(m, lineas_por_id, cilindro["id"])
 
         st.divider()
