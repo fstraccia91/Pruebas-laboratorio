@@ -209,9 +209,11 @@ def _render_conectar_desconectar():
             if st.button(l["gas"], key=f"linea_btn_{l['id']}", use_container_width=True, type="primary"):
                 st.session_state.gases_linea_id = l["id"]
                 st.rerun()
-            if cil and st.button("✏️ Editar tubo conectado", key=f"editar_desde_linea_{l['id']}", use_container_width=True):
-                st.session_state.gases_editar_id = cil["id"]
-                st.rerun()
+            if cil:
+                with st.expander("⚙️ Más opciones"):
+                    if st.button("✏️ Editar tubo conectado", key=f"editar_desde_linea_{l['id']}", use_container_width=True):
+                        st.session_state.gases_editar_id = cil["id"]
+                        st.rerun()
 
 
 def _render_gestionar_linea(linea_id):
@@ -470,24 +472,24 @@ def _render_grupo_completo(grupo):
                         _confirmar(f"✅ Reclamo registrado para {_etiqueta_cilindro(c)}.")
                         st.rerun()
 
-            fila2a, fila2b = st.columns(2)
-            if fila2a.button("🚫 Dar de baja cilindro", key=f"baja_{c['id']}"):
-                st.session_state[f"confirmar_baja_{c['id']}"] = True
-            if st.session_state.get(f"confirmar_baja_{c['id']}"):
-                st.warning(
-                    "Esto es definitivo: significa que el cilindro no vuelve más al sistema (se devolvió o se dio "
-                    "de baja). No tiene que ver con que el proveedor venga a buscarlo — para eso están los otros "
-                    "botones de esta pantalla, ni con sacarlo de una línea — para eso está \"Desconectar\"."
-                )
-                if st.button("Sí, dar de baja definitivamente", key=f"confirmar_baja_btn_{c['id']}", type="primary"):
-                    dg.retirar_cilindro(c["id"], st.session_state.analista_actual)
-                    st.session_state[f"confirmar_baja_{c['id']}"] = False
-                    _confirmar(f"✅ {_etiqueta_cilindro(c)} dado de baja.")
+            with st.expander("⚙️ Más opciones"):
+                m1, m2 = st.columns(2)
+                if m1.button("✏️ Editar", key=f"editar_{c['id']}", use_container_width=True):
+                    st.session_state.gases_editar_id = c["id"]
                     st.rerun()
-
-            if fila2b.button("✏️ Editar", key=f"editar_{c['id']}"):
-                st.session_state.gases_editar_id = c["id"]
-                st.rerun()
+                if m2.button("🚫 Dar de baja cilindro", key=f"baja_{c['id']}", use_container_width=True):
+                    st.session_state[f"confirmar_baja_{c['id']}"] = True
+                if st.session_state.get(f"confirmar_baja_{c['id']}"):
+                    st.warning(
+                        "Esto es definitivo: significa que el cilindro no vuelve más al sistema (se devolvió o se dio "
+                        "de baja). No tiene que ver con que el proveedor venga a buscarlo — para eso están los otros "
+                        "botones de esta pantalla, ni con sacarlo de una línea — para eso está \"Desconectar\"."
+                    )
+                    if st.button("Sí, dar de baja definitivamente", key=f"confirmar_baja_btn_{c['id']}", type="primary"):
+                        dg.retirar_cilindro(c["id"], st.session_state.analista_actual)
+                        st.session_state[f"confirmar_baja_{c['id']}"] = False
+                        _confirmar(f"✅ {_etiqueta_cilindro(c)} dado de baja.")
+                        st.rerun()
 
 
 def _render_editar_cilindro(cilindro_id):
