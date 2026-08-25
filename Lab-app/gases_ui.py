@@ -88,7 +88,7 @@ def render_gases():
     for clave, valor in [
         ("gases_seccion", None), ("gases_linea_id", None),
         ("confirmacion_gases", None), ("gases_editar_id", None),
-        ("gases_grupo", None),
+        ("gases_grupo", None), ("gases_accion_rapida", None), ("gases_accion_gas", None),
     ]:
         if clave not in st.session_state:
             st.session_state[clave] = valor
@@ -98,6 +98,10 @@ def render_gases():
         if st.button("← Menú", key="btn_volver_menu"):
             if st.session_state.gases_editar_id:
                 st.session_state.gases_editar_id = None
+            elif st.session_state.gases_accion_gas:
+                st.session_state.gases_accion_gas = None
+            elif st.session_state.gases_accion_rapida:
+                st.session_state.gases_accion_rapida = None
             elif st.session_state.gases_grupo:
                 st.session_state.gases_grupo = None
             elif st.session_state.gases_linea_id:
@@ -114,6 +118,8 @@ def render_gases():
 
     if st.session_state.gases_editar_id:
         _render_editar_cilindro(st.session_state.gases_editar_id)
+    elif st.session_state.gases_accion_rapida:
+        _render_accion_rapida(st.session_state.gases_accion_rapida)
     elif st.session_state.gases_linea_id:
         _render_gestionar_linea(st.session_state.gases_linea_id)
     elif st.session_state.gases_seccion == "conectar":
@@ -159,6 +165,20 @@ def _render_inicio():
         texto = " · ".join(f"{_etiqueta_cilindro(c)} (pedido N° {p.get('numero_pedido') or '—'}, hace {dias} días)" for c, p, dias in alertas_pedido)
         st.warning(f"📞 Pedido sin resolver hace más de una semana: {texto}")
 
+    st.markdown("**⚡ Tareas rápidas**")
+    acciones_rapidas = [
+        ("cambiar", "🔄 Cambiar tubo"),
+        ("pedir", "📞 Pedir relleno"),
+        ("reclamo", "📞 Poner reclamo"),
+        ("confirmar", "✅ Confirmar retiro/canje"),
+    ]
+    cols_rapidas = st.columns(2)
+    for idx, (clave_accion, etiqueta_accion) in enumerate(acciones_rapidas):
+        if cols_rapidas[idx % 2].button(etiqueta_accion, key=f"accion_rapida_{clave_accion}", use_container_width=True, type="primary"):
+            st.session_state.gases_accion_rapida = clave_accion
+            st.rerun()
+
+    st.divider()
     st.caption("Elegí qué querés hacer.")
     persona_actual = st.session_state.analista_actual
     ocultas_todas = get_secciones_ocultas(persona_actual)
@@ -257,11 +277,11 @@ def _render_gestionar_linea(linea_id):
             cb1, cb2 = st.columns(2)
             if cb1.button("🟢 Todavía tiene gas", key=f"desc_lleno_{linea_id}", use_container_width=True):
                 dg.desconectar_cilindro(linea_id, analista, tiene_gas=True, nota=nota_saca)
-                _confirmar(f"✅ Cilindro desconectado de {linea['nombre']} — queda lleno, disponible.")
+                _confirmar(f"✅ Cilindro desconectado de {linea['nombre']} — queda lleno, disponible. Elegí abajo cuál conectar en su lugar (si corresponde).")
                 st.rerun()
             if cb2.button("🔴 Está vacío", key=f"desc_vacio_{linea_id}", use_container_width=True, type="primary"):
                 dg.desconectar_cilindro(linea_id, analista, tiene_gas=False, nota=nota_saca)
-                _confirmar(f"✅ Cilindro desconectado de {linea['nombre']} — queda vacío, pendiente de enviar a rellenar.")
+                _confirmar(f"✅ Cilindro desconectado de {linea['nombre']} — queda vacío, pendiente de pedir el retiro. Elegí abajo cuál conectar en su lugar.")
                 st.rerun()
             st.caption(
                 "El pedido al proveedor y el envío/canje se hacen aparte, desde 🔧 Gestión de tubos, "
@@ -915,5 +935,109 @@ def _render_graficos():
         st.plotly_chart(fig3, use_container_width=True)
 
 
+def _render_accion_rapida(tipo):
+    """Las 4 tareas del día a día, con el mínimo de pasos: elegís el gas y,
+    si hay un solo cilindro en esa situación, va directo al formulario —
+    sin tener que saber en qué grupo de 'Gestión de tubos' está."""
+    titulos = {
+        "cambiar": "🔄 Cambiar tubo",
+        "pedir": "📞 Pedir relleno",
+        "reclamo": "📞 Poner reclamo",
+        "confirmar": "✅ Confirmar retiro/canje",
+    }
+    subtitulo_con_icono(titulos[tipo], "")
+
+    gas_elegido = st.session_state.get("gases_accion_gas")
+    if not gas_elegido:
+        st.caption("Elegí el gas.")
+        cols = st.columns(2)
+        for idx, gas in enumerate(GASES):
+            if cols[idx % 2].button(gas, key=f"accion_rapida_gas_{gas}", use_container_width=True, type="primary"):
+                st.session_state.gases_accion_gas = gas
+                st.rerun()
+        return
+
+    if st.button("← Elegir otro gas", key="accion_rapida_volver_gas"):
+        st.session_state.gases_accion_gas = None
+        st.rerun()
+
+    if tipo == "cambiar":
+        linea = next((l for l in dg.get_lineas() if l["gas"] == gas_elegido), None)
+        st.session_state.gases_accion_gas = None
+        st.session_state.gases_accion_rapida = None
+        if linea:
+            st.session_state.gases_linea_id = linea["id"]
+        st.rerun()
+        return
+
+    if tipo == "pedir":
+        candidatos = [c for c in dg.get_cilindros(gas=gas_elegido, estado="vacio") if dg.pedido_activo(c["id"]) is None]
+        mensaje_vacio = f"No hay tubos de {gas_elegido} vacíos sin pedido ahora mismo."
+    elif tipo == "reclamo":
+        candidatos = [c for c in dg.get_cilindros(gas=gas_elegido, estado="vacio") if dg.pedido_activo(c["id"]) is not None]
+        candidatos += dg.get_cilindros(gas=gas_elegido, estado="en_relleno")
+        mensaje_vacio = f"No hay tubos de {gas_elegido} esperando al proveedor ahora mismo."
+    else:  # confirmar
+        candidatos = [c for c in dg.get_cilindros(gas=gas_elegido, estado="vacio") if dg.pedido_activo(c["id"]) is not None]
+        mensaje_vacio = f"No hay tubos de {gas_elegido} con un pedido pendiente de confirmar ahora mismo."
+
+    if not candidatos:
+        st.info(mensaje_vacio)
+        return
+
+    if len(candidatos) > 1:
+        st.caption(f"Hay {len(candidatos)} tubos de {gas_elegido} en esta situación — elegí cuál:")
+        opciones = {_etiqueta_cilindro(c): c for c in candidatos}
+        elegido_label = st.selectbox("Cilindro", list(opciones.keys()), key=f"accion_rapida_cil_{tipo}")
+        c = opciones[elegido_label]
+    else:
+        c = candidatos[0]
+        st.markdown(f"**{_etiqueta_cilindro(c)}**")
+
+    if tipo == "pedir":
+        numero_pedido = st.text_input("N° de pedido (obligatorio)", key=f"accion_rapida_pedido_num_{c['id']}")
+        if st.button("📞 Registrar pedido", key=f"accion_rapida_pedido_btn_{c['id']}", type="primary"):
+            if not numero_pedido.strip():
+                st.error("Ingresá el N° de pedido antes de confirmar.")
+            else:
+                dg.registrar_pedido(c["id"], st.session_state.analista_actual, numero_pedido.strip())
+                st.session_state.gases_accion_gas = None
+                st.session_state.gases_accion_rapida = None
+                _confirmar(f"✅ Pedido registrado para {_etiqueta_cilindro(c)}.")
+                st.rerun()
+
+    elif tipo == "reclamo":
+        motivo = st.selectbox("Motivo", dg.MOTIVOS_RECLAMO, key=f"accion_rapida_motivo_{c['id']}")
+        nota = st.text_input("Nota (opcional)", key=f"accion_rapida_nota_{c['id']}")
+        if st.button("📞 Registrar reclamo", key=f"accion_rapida_reclamo_btn_{c['id']}", type="primary"):
+            dg.registrar_reclamo(c["id"], st.session_state.analista_actual, motivo, nota=nota)
+            st.session_state.gases_accion_gas = None
+            st.session_state.gases_accion_rapida = None
+            _confirmar(f"✅ Reclamo registrado para {_etiqueta_cilindro(c)}.")
+            st.rerun()
+
+    else:  # confirmar
+        if c.get("modalidad") == "alquiler":
+            remito = st.text_input("N° de remito del canje (obligatorio)", key=f"accion_rapida_remito_canje_{c['id']}")
+            if st.button("🔄 Confirmar canje", key=f"accion_rapida_canje_btn_{c['id']}", type="primary"):
+                if not remito.strip():
+                    st.error("Ingresá el N° de remito antes de confirmar.")
+                else:
+                    dg.confirmar_canje(c["id"], st.session_state.analista_actual, remito.strip())
+                    st.session_state.gases_accion_gas = None
+                    st.session_state.gases_accion_rapida = None
+                    _confirmar(f"✅ {_etiqueta_cilindro(c)} canjeado (remito {remito.strip()}) — de vuelta en depósito, lleno.")
+                    st.rerun()
+        else:
+            remito = st.text_input("N° de remito de devolución (obligatorio)", key=f"accion_rapida_remito_envio_{c['id']}")
+            if st.button("📤 Confirmar que se envió", key=f"accion_rapida_envio_btn_{c['id']}", type="primary"):
+                if not remito.strip():
+                    st.error("Ingresá el N° de remito antes de confirmar.")
+                else:
+                    dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual, remito.strip())
+                    st.session_state.gases_accion_gas = None
+                    st.session_state.gases_accion_rapida = None
+                    _confirmar(f"✅ {_etiqueta_cilindro(c)} marcado como enviado al proveedor (remito {remito.strip()}).")
+                    st.rerun()
 
 
