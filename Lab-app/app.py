@@ -26,7 +26,7 @@ import os
 import streamlit as st
 
 from datos import (
-    ConfiguracionFaltante, init_db, get_familias, item_stock,
+    ConfiguracionFaltante, init_db, item_stock,
     get_personas, add_persona, toggle_persona, delete_persona,
     get_favoritos_ids, conteo_usos_recientes,
     get_modulos_habilitados, set_modulos_habilitados,
@@ -40,6 +40,7 @@ from ui_helpers import (
     _buscar_imagen, _img_datauri, icono_familia_html,
     linea_marca, titulo_seccion, fila_titulo_pictogramas,
     NIVEL_COLORES, icono_seccion_html, franja_ondulada, tarjeta_boton,
+    get_familias_cache,
 )
 from datos_gases import modulo_habilitado as gases_habilitado
 from gases_ui import render_gases
@@ -144,70 +145,85 @@ st.markdown("""
     /* ---- Escalada de color por nivel de profundidad (tarjeta_boton) ----
        Nivel 0: módulos · Nivel 1: secciones dentro de un módulo ·
        Nivel 2: acciones dentro de una pantalla. */
-    div[class*="st-key-tbnv0_"] {
+    div[class*="st-key-tbnv0"] {
         border: 2px solid #14504A !important;
         border-radius: 14px !important;
         box-shadow: 0 3px 0 #14504A, 0 4px 10px rgba(0,0,0,0.06) !important;
-        padding: 14px 10px !important;
+        padding: 8px 12px !important;
         transition: all 0.12s ease;
     }
-    div[class*="st-key-tbnv0_"] .stButton > button {
+    div[class*="st-key-tbnv0"] .stButton > button {
         border: none !important;
         background: transparent !important;
         color: #14504A !important;
         box-shadow: none !important;
     }
-    div[class*="st-key-tbnv0_"]:hover, div[class*="st-key-tbnv0_"]:active {
+    div[class*="st-key-tbnv0"]:hover, div[class*="st-key-tbnv0"]:active {
         background: #14504A !important;
         transform: translateY(2px);
         box-shadow: 0 1px 0 #14504A, 0 2px 6px rgba(0,0,0,0.08) !important;
     }
-    div[class*="st-key-tbnv0_"]:hover .stButton > button, div[class*="st-key-tbnv0_"]:active .stButton > button {
+    div[class*="st-key-tbnv0"]:hover .stButton > button, div[class*="st-key-tbnv0"]:active .stButton > button {
         color: white !important;
     }
 
-    div[class*="st-key-tbnv1_"] {
+    div[class*="st-key-tbnv1"] {
         border: 2px solid #3D8577 !important;
         border-radius: 14px !important;
         box-shadow: 0 3px 0 #3D8577, 0 4px 10px rgba(0,0,0,0.06) !important;
-        padding: 14px 10px !important;
+        padding: 8px 12px !important;
         transition: all 0.12s ease;
     }
-    div[class*="st-key-tbnv1_"] .stButton > button {
+    div[class*="st-key-tbnv1"] .stButton > button {
         border: none !important;
         background: transparent !important;
         color: #3D8577 !important;
         box-shadow: none !important;
     }
-    div[class*="st-key-tbnv1_"]:hover, div[class*="st-key-tbnv1_"]:active {
+    div[class*="st-key-tbnv1"]:hover, div[class*="st-key-tbnv1"]:active {
         background: #3D8577 !important;
         transform: translateY(2px);
         box-shadow: 0 1px 0 #3D8577, 0 2px 6px rgba(0,0,0,0.08) !important;
     }
-    div[class*="st-key-tbnv1_"]:hover .stButton > button, div[class*="st-key-tbnv1_"]:active .stButton > button {
+    div[class*="st-key-tbnv1"]:hover .stButton > button, div[class*="st-key-tbnv1"]:active .stButton > button {
         color: white !important;
     }
 
-    div[class*="st-key-tbnv2_"] {
+    div[class*="st-key-tbnv2"] {
         border: 2px solid #5DADE2 !important;
         border-radius: 14px !important;
         box-shadow: 0 3px 0 #5DADE2, 0 4px 10px rgba(0,0,0,0.06) !important;
-        padding: 14px 10px !important;
+        padding: 8px 12px !important;
         transition: all 0.12s ease;
     }
-    div[class*="st-key-tbnv2_"] .stButton > button {
+    div[class*="st-key-tbnv2"] .stButton > button {
         border: none !important;
         background: transparent !important;
         color: #2874A6 !important;
         box-shadow: none !important;
     }
-    div[class*="st-key-tbnv2_"]:hover, div[class*="st-key-tbnv2_"]:active {
+    div[class*="st-key-tbnv2"]:hover, div[class*="st-key-tbnv2"]:active {
         background: #5DADE2 !important;
         transform: translateY(2px);
         box-shadow: 0 1px 0 #5DADE2, 0 2px 6px rgba(0,0,0,0.08) !important;
     }
-    div[class*="st-key-tbnv2_"]:hover .stButton > button, div[class*="st-key-tbnv2_"]:active .stButton > button {
+    div[class*="st-key-tbnv2"]:hover .stButton > button, div[class*="st-key-tbnv2"]:active .stButton > button {
         color: white !important;
+    }
+
+    /* ---- Variante compacta (tarjeta_boton con compacto=True) — para
+       accesos rápidos, no para la navegación principal: mismo color según
+       el nivel, pero mucho más chica. */
+    div[class*="st-key-tbnv0sm_"], div[class*="st-key-tbnv1sm_"], div[class*="st-key-tbnv2sm_"] {
+        padding: 4px 8px !important;
+        border-radius: 10px !important;
+    }
+    div[class*="st-key-tbnv0sm_"] .stButton > button,
+    div[class*="st-key-tbnv1sm_"] .stButton > button,
+    div[class*="st-key-tbnv2sm_"] .stButton > button {
+        min-height: 1.8rem !important;
+        padding: 2px 6px !important;
+        font-size: 0.85rem !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -321,7 +337,7 @@ if not st.session_state.ir_aplicado:
         if _familia_param:
             if _familia_param == "gases":
                 st.session_state.familia_id = "__gases__"
-            elif _familia_param in {f["id"] for f in get_familias()}:
+            elif _familia_param in {f["id"] for f in get_familias_cache()}:
                 st.session_state.familia_id = _familia_param
         if _ir in _secciones_top:
             st.session_state.seccion_activa = _ir
@@ -382,7 +398,7 @@ def render_home():
 
     hay_gases = gases_habilitado()
 
-    familias = get_familias()
+    familias = get_familias_cache()
     total_botones = len(familias) + (1 if hay_gases else 0)
     cols = st.columns(total_botones)
     for idx, fam in enumerate(familias):
@@ -471,7 +487,7 @@ def render_qr_codigos():
         return pdf_buf.getvalue()
 
     entradas = [("🏠 App general", "App general", url_base)]
-    familias_activas = {f["id"] for f in get_familias() if f["activo"]}
+    familias_activas = {f["id"] for f in get_familias_cache() if f["activo"]}
     if "solventes" in familias_activas:
         entradas.append(("📲 Usar Solventes", "Usar Solventes", f"{url_base}/?familia=solventes&ir=usar"))
     if "cromato" in familias_activas:
@@ -526,7 +542,7 @@ def render_personas_global():
             add_persona(nombre.strip())
             st.rerun()
 
-    modulos_disponibles = [(f["id"], f["nombre"]) for f in get_familias() if f["activo"]]
+    modulos_disponibles = [(f["id"], f["nombre"]) for f in get_familias_cache() if f["activo"]]
     if gases_habilitado():
         modulos_disponibles.append(("__gases__", "Gases Cromatográficos"))
 
@@ -581,7 +597,7 @@ def render_personas_global():
 
 
 if st.session_state.familia_id is None:
-    _familias_activas = [f for f in get_familias() if f["activo"]]
+    _familias_activas = [f for f in get_familias_cache() if f["activo"]]
     if len(_familias_activas) == 1 and not gases_habilitado():
         st.session_state.familia_id = _familias_activas[0]["id"]
         st.rerun()

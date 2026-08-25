@@ -13,17 +13,40 @@ import os
 import streamlit as st
 
 from logica import RIESGOS_GHS
+from datos import get_familias as _get_familias_sin_cache
+from datos import get_catalogo as _get_catalogo_sin_cache
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_familias_cache():
+    """Envoltorio con caché de datos.get_familias() — la lista de familias
+    casi nunca cambia (solo con una acción manual de administración), así
+    que no hace falta volver a pedirla a Supabase en cada toque de botón.
+    Se refresca sola cada 60 segundos como red de seguridad."""
+    return _get_familias_sin_cache()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_catalogo_cache(familia_id):
+    """Ídem, para el catálogo de referencia (nombre/CAS/riesgos ya
+    cargados) — es contenido de referencia, no cambia con el uso diario."""
+    return _get_catalogo_sin_cache(familia_id)
+
+
+@st.cache_data(show_spinner=False)
 def _img_b64(path):
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()
 
 
+@st.cache_data(show_spinner=False)
 def _buscar_imagen(base_sin_extension):
     """Busca <base>.png, .jpg, .jpeg, .webp o .jfif (probando también en
     mayúsculas) y devuelve la ruta que encuentre primero, o None si no
-    existe ninguna. Así no importa en qué formato hayas guardado la imagen."""
+    existe ninguna. Así no importa en qué formato hayas guardado la imagen.
+    Cacheado: los archivos de assets/iconos no cambian mientras la app
+    corre, así que no hace falta volver a revisar el disco en cada toque
+    de botón."""
     for ext in ("png", "jpg", "jpeg", "webp", "jfif", "PNG", "JPG", "JPEG", "WEBP", "JFIF"):
         ruta = f"{base_sin_extension}.{ext}"
         if os.path.exists(ruta):
@@ -228,21 +251,28 @@ def franja_ondulada(titulo_html, subtitulo="", color="#5DADE2", tipo_onda=1):
     )
 
 
-def tarjeta_boton(icono_html_str, texto, key, nivel=1, ayuda=None, deshabilitado=False):
-    """Tarjeta con ícono + texto adentro de un recuadro con borde de color
-    (según el nivel de profundidad de navegación) y relieve — el botón real
-    vive dentro del mismo contenedor, sin su propio borde, para que se vea
-    como una sola pieza en vez de ícono y botón separados.
+def tarjeta_boton(icono_html_str, texto, key, nivel=1, ayuda=None, deshabilitado=False, compacto=False):
+    """Tarjeta con ícono AL COSTADO del texto (no arriba) adentro de un
+    recuadro con borde de color (según el nivel de profundidad de
+    navegación) y relieve — el botón real vive dentro del mismo contenedor,
+    sin su propio borde, para que se vea como una sola pieza.
+    compacto=True la hace más chica — pensada para accesos rápidos, no
+    para la navegación principal.
     Devuelve True si se tocó (nunca True si deshabilitado=True). El CSS que
     le da el estilo vive en app.py (se aplica una sola vez, de forma global)."""
-    key_completo = f"tbnv{nivel}_{key}"
+    sufijo_tamano = "sm" if compacto else ""
+    key_completo = f"tbnv{nivel}{sufijo_tamano}_{key}"
+    tamano_icono = 20 if compacto else 26
     with st.container(border=True, key=key_completo):
-        st.markdown(
-            f"<div style='text-align:center; font-size:30px; margin-bottom:2px;'>{icono_html_str}</div>",
-            unsafe_allow_html=True,
-        )
-        tocado = st.button(
-            texto, key=f"btn_{key_completo}", use_container_width=True,
-            help=ayuda, disabled=deshabilitado,
-        )
+        c_icono, c_texto = st.columns([1, 4])
+        with c_icono:
+            st.markdown(
+                f"<div style='text-align:center; font-size:{tamano_icono}px; line-height:1;'>{icono_html_str}</div>",
+                unsafe_allow_html=True,
+            )
+        with c_texto:
+            tocado = st.button(
+                texto, key=f"btn_{key_completo}", use_container_width=True,
+                help=ayuda, disabled=deshabilitado,
+            )
     return tocado

@@ -430,9 +430,19 @@ def duraciones_conexion(gas=None, modalidad=None):
     cilindros = get_cilindros(gas=gas) if gas else get_cilindros()
     if modalidad:
         cilindros = [c for c in cilindros if c.get("modalidad") == modalidad]
+
+    sb = get_client()
+    ids_cilindros = [c["id"] for c in cilindros]
+    if not ids_cilindros:
+        return []
+    movimientos = sb.table("movimientos_cilindro").select("*").in_("cilindro_id", ids_cilindros).order("fecha").execute().data
+    movs_por_cilindro = {}
+    for m in movimientos:
+        movs_por_cilindro.setdefault(m["cilindro_id"], []).append(m)
+
     resultado = []
     for c in cilindros:
-        hist = sorted(get_historial(cilindro_id=c["id"], limite=500), key=lambda h: h["fecha"])
+        hist = movs_por_cilindro.get(c["id"], [])
         inicio = None
         for h in hist:
             if h.get("anulado"):
@@ -457,9 +467,19 @@ def duraciones_relleno(gas=None, modalidad=None):
     cilindros = get_cilindros(gas=gas) if gas else get_cilindros()
     if modalidad:
         cilindros = [c for c in cilindros if c.get("modalidad") == modalidad]
+
+    sb = get_client()
+    ids_cilindros = [c["id"] for c in cilindros]
+    if not ids_cilindros:
+        return []
+    movimientos = sb.table("movimientos_cilindro").select("*").in_("cilindro_id", ids_cilindros).order("fecha").execute().data
+    movs_por_cilindro = {}
+    for m in movimientos:
+        movs_por_cilindro.setdefault(m["cilindro_id"], []).append(m)
+
     resultado = []
     for c in cilindros:
-        hist = sorted(get_historial(cilindro_id=c["id"], limite=500), key=lambda h: h["fecha"])
+        hist = movs_por_cilindro.get(c["id"], [])
         inicio = None
         for h in hist:
             if h.get("anulado"):
@@ -505,27 +525,60 @@ def _dias_desde(fecha_iso):
         return None
 
 
-def alertas_stock_bajo(minimo=1):
+def _todo_para_alertas():
+    """Trae, en 3 consultas en total (sin importar cuántos cilindros haya),
+    todo lo que hace falta para calcular las 4 alertas de una vez —
+    cilindros, movimientos y cargas, ya agrupados por cilindro_id. Antes,
+    cada alerta hacía una consulta APARTE por cada cilindro; con muchos
+    cilindros eso se sentía lento (decenas de idas y vueltas a Supabase
+    solo para abrir la pantalla de inicio de Gases)."""
+    sb = get_client()
+    cilindros = sb.table("cilindros").select("*").execute().data
+    movimientos = sb.table("movimientos_cilindro").select("*").order("fecha").execute().data
+    cargas = sb.table("cargas").select("*").execute().data
+
+    movs_por_cilindro = {}
+    for m in movimientos:
+        movs_por_cilindro.setdefault(m["cilindro_id"], []).append(m)
+
+    cargas_por_cilindro = {}
+    for c in cargas:
+        cargas_por_cilindro.setdefault(c["cilindro_id"], []).append(c)
+
+    return {"cilindros": cilindros, "movs": movs_por_cilindro, "cargas": cargas_por_cilindro}
+
+
+def alertas_stock_bajo(minimo=1, datos_bulk=None):
     """Gases con `minimo` o menos cilindros llenos disponibles en depósito
     (sin contar el que esté conectado) — para avisar antes de quedarse sin
-    repuesto. Devuelve [(gas, cantidad_actual), ...]."""
+    repuesto. Devuelve [(gas, cantidad_actual), ...].
+    datos_bulk (opcional): resultado de _todo_para_alertas(), para no
+    volver a consultar si ya lo tenés (así lo usa _render_inicio, una vez
+    para las 4 alertas juntas)."""
+    datos_bulk = datos_bulk or _todo_para_alertas()
+    cilindros = datos_bulk["cilindros"]
     resultado = []
     for gas in GASES:
-        cantidad = len(get_cilindros(gas=gas, estado="lleno"))
+        cantidad = len([c for c in cilindros if c["gas"] == gas and c["estado"] == "lleno"])
         if cantidad <= minimo:
             resultado.append((gas, cantidad))
     return resultado
 
 
-def alertas_relleno_demorado(dias_limite=30):
+def alertas_relleno_demorado(dias_limite=30, datos_bulk=None):
     """Cilindros que llevan `dias_limite` días o más en el proveedor sin
     volver — para no perderles el rastro. Devuelve [(cilindro, dias), ...]."""
+    datos_bulk = datos_bulk or _todo_para_alertas()
     resultado = []
-    for c in get_cilindros(estado="en_relleno"):
-        carga = _carga_activa(c["id"])
-        if not carga:
+    for c in datos_bulk["cilindros"]:
+        if c["estado"] != "en_relleno":
             continue
-        envios = [m for m in movimientos_de_carga(carga["id"]) if m["tipo"] == "enviado_a_rellenar" and not m.get("anulado")]
+        cargas_c = datos_bulk["cargas"].get(c["id"], [])
+        carga_activa = next((cg for cg in cargas_c if cg.get("fecha_fin") is None), None)
+        if not carga_activa:
+            continue
+        movs_c = [m for m in datos_bulk["movs"].get(c["id"], []) if m.get("carga_id") == carga_activa["id"]]
+        envios = [m for m in movs_c if m["tipo"] == "enviado_a_rellenar" and not m.get("anulado")]
         if not envios:
             continue
         dias = _dias_desde(envios[-1]["fecha"])
@@ -534,14 +587,30 @@ def alertas_relleno_demorado(dias_limite=30):
     return resultado
 
 
-def alertas_pedido_sin_resolver(dias_limite=7):
+def alertas_pedido_sin_resolver(dias_limite=7, datos_bulk=None):
     """Cilindros con un pedido registrado hace `dias_limite` días o más,
     sin que todavía se haya confirmado el envío/canje — para no perder el
     rastro de un llamado que quedó sin resolver. Devuelve [(cilindro,
     pedido, dias), ...]."""
+    datos_bulk = datos_bulk or _todo_para_alertas()
     resultado = []
-    for c in get_cilindros(estado="vacio"):
-        pedido = pedido_activo(c["id"])
+    for c in datos_bulk["cilindros"]:
+        if c["estado"] != "vacio":
+            continue
+        cargas_c = datos_bulk["cargas"].get(c["id"], [])
+        carga_activa = next((cg for cg in cargas_c if cg.get("fecha_fin") is None), None)
+        if not carga_activa:
+            continue
+        movs_c = [m for m in datos_bulk["movs"].get(c["id"], []) if m.get("carga_id") == carga_activa["id"]]
+        pedido = None
+        for h in reversed(movs_c):
+            if h.get("anulado"):
+                continue
+            if h["tipo"] == "pedido":
+                pedido = h
+                break
+            if h["tipo"] in ("enviado_a_rellenar", "canje"):
+                break
         if not pedido:
             continue
         dias = _dias_desde(pedido["fecha"])
@@ -550,21 +619,35 @@ def alertas_pedido_sin_resolver(dias_limite=7):
     return resultado
 
 
-def alertas_stock_predictivas(dias_limite=15):
+def alertas_stock_predictivas(dias_limite=15, datos_bulk=None):
     """Para cada gas, estima cuántos días de autonomía quedan según el
     promedio REAL de cuánto dura cada conexión (no solo cuántos cilindros
     llenos hay) — más útil que alertas_stock_bajo, que solo mira cantidad
     sin importar el ritmo de consumo. Devuelve [(gas, dias_estimados), ...]
     para los gases cuya autonomía estimada sea menor a dias_limite."""
+    datos_bulk = datos_bulk or _todo_para_alertas()
     resultado = []
     for gas in GASES:
-        duraciones = duraciones_conexion(gas=gas)
+        cilindros_gas = [c for c in datos_bulk["cilindros"] if c["gas"] == gas]
+        duraciones = []
+        for c in cilindros_gas:
+            hist = sorted(datos_bulk["movs"].get(c["id"], []), key=lambda h: h["fecha"])
+            inicio = None
+            for h in hist:
+                if h.get("anulado"):
+                    continue
+                if h["tipo"] == "conectado":
+                    inicio = h["fecha"]
+                elif h["tipo"] == "desconectado" and inicio:
+                    dias_conex = (datetime.fromisoformat(h["fecha"]) - datetime.fromisoformat(inicio)).total_seconds() / 86400
+                    duraciones.append(dias_conex)
+                    inicio = None
         if not duraciones:
             continue
-        promedio_dias = sum(d["dias"] for d in duraciones) / len(duraciones)
+        promedio_dias = sum(duraciones) / len(duraciones)
         if promedio_dias <= 0:
             continue
-        cilindros_llenos = len(get_cilindros(gas=gas, estado="lleno"))
+        cilindros_llenos = len([c for c in cilindros_gas if c["estado"] == "lleno"])
         dias_estimados = round(cilindros_llenos * promedio_dias, 1)
         if dias_estimados < dias_limite:
             resultado.append((gas, dias_estimados))

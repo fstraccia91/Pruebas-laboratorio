@@ -17,6 +17,21 @@ from ui_helpers import (
     tarjeta_boton, NIVEL_COLORES, franja_ondulada, icono_seccion_html,
 )
 
+GRUPOS_CILINDROS = [
+    ("lleno", "deposito", "📦", "En depósito"),
+    ("vacio_sin_pedido", "vacios", "🦯", "Vacíos"),
+    ("vacio_con_pedido", "pedidos_solicitados", "📞", "Pedidos solicitados"),
+    ("en_relleno", "en_proveedor", "🔄", "En el proveedor"),
+]
+
+SECCIONES_GASES = [
+    ("conectar", "conectar", "🔌", "Conectar/Desconectar"),
+    ("cilindros", "gestion_tubos", "🔧", "Gestión de tubos"),
+    ("historial", "historial", "📋", "Historial"),
+    ("buscar", "buscar", "🔍", "Buscar circuito"),
+    ("graficos", "graficos", "📊", "Gráficos"),
+]
+
 ESTADOS_LABEL = {
     "lleno": "✅ Lleno, en depósito",
     "conectado": "🔌 Conectado",
@@ -86,6 +101,19 @@ def _etiqueta_cilindro(c):
     return " · ".join(partes)
 
 
+def _titulo_seccion_gases(sid):
+    """Título con ícono para una sección del menú principal de Gases —
+    siempre el mismo ícono que tenía el botón que llevó acá."""
+    _, icono_base, emoji, titulo = next(s for s in SECCIONES_GASES if s[0] == sid)
+    subtitulo_con_icono(titulo, icono_seccion_html(icono_base, tamano=26, emoji_respaldo=emoji))
+
+
+def _titulo_grupo_gases(clave):
+    """Ídem, para un grupo de Gestión de tubos."""
+    _, icono_base, emoji, titulo = next(g for g in GRUPOS_CILINDROS if g[0] == clave)
+    subtitulo_con_icono(titulo, icono_seccion_html(icono_base, tamano=26, emoji_respaldo=emoji))
+
+
 def render_gases():
     """Punto de entrada del módulo — dispatcher entre sus pantallas."""
     for clave, valor in [
@@ -150,22 +178,24 @@ COLOR_GAS_IRAM = {
 
 
 def _render_inicio():
-    alertas_stock = dg.alertas_stock_bajo(minimo=1)
+    _datos_alertas = dg._todo_para_alertas()
+
+    alertas_stock = dg.alertas_stock_bajo(minimo=1, datos_bulk=_datos_alertas)
     if alertas_stock:
         texto = " · ".join(f"{gas} (quedan {cant} lleno{'s' if cant != 1 else ''})" for gas, cant in alertas_stock)
         st.warning(f"⚠️ Pocos cilindros de repuesto: {texto} — conviene mandar a rellenar.")
 
-    alertas_predictivas = dg.alertas_stock_predictivas(dias_limite=15)
+    alertas_predictivas = dg.alertas_stock_predictivas(dias_limite=15, datos_bulk=_datos_alertas)
     if alertas_predictivas:
         texto = " · ".join(f"{gas} (autonomía estimada: ~{dias:g} días)" for gas, dias in alertas_predictivas)
         st.warning(f"📉 Al ritmo actual de consumo, quedan pocos días de autonomía: {texto}")
 
-    alertas_demora = dg.alertas_relleno_demorado(dias_limite=30)
+    alertas_demora = dg.alertas_relleno_demorado(dias_limite=30, datos_bulk=_datos_alertas)
     if alertas_demora:
         texto = " · ".join(f"{_etiqueta_cilindro(c)} (hace {dias} días)" for c, dias in alertas_demora)
         st.warning(f"⏰ Hace más de un mes en el proveedor, conviene consultar: {texto}")
 
-    alertas_pedido = dg.alertas_pedido_sin_resolver(dias_limite=7)
+    alertas_pedido = dg.alertas_pedido_sin_resolver(dias_limite=7, datos_bulk=_datos_alertas)
     if alertas_pedido:
         texto = " · ".join(f"{_etiqueta_cilindro(c)} (pedido N° {p.get('numero_pedido') or '—'}, hace {dias} días)" for c, p, dias in alertas_pedido)
         st.warning(f"📞 Pedido sin resolver hace más de una semana: {texto}")
@@ -180,7 +210,7 @@ def _render_inicio():
     cols_rapidas = st.columns(2)
     for idx, (clave_accion, emoji, etiqueta_accion) in enumerate(acciones_rapidas):
         with cols_rapidas[idx % 2]:
-            if tarjeta_boton(emoji, etiqueta_accion, key=f"accion_rapida_{clave_accion}", nivel=1):
+            if tarjeta_boton(emoji, etiqueta_accion, key=f"accion_rapida_{clave_accion}", nivel=1, compacto=True):
                 st.session_state.gases_accion_rapida = clave_accion
                 st.rerun()
 
@@ -189,14 +219,7 @@ def _render_inicio():
     persona_actual = st.session_state.analista_actual
     ocultas_todas = get_secciones_ocultas(persona_actual)
     ocultas_gases = ocultas_todas.get("gases", [])
-    secciones_gases = [
-        ("conectar", "conectar", "🔌", "Conectar/Desconectar"),
-        ("cilindros", "gestion_tubos", "🔧", "Gestión de tubos"),
-        ("historial", "historial", "📋", "Historial"),
-        ("buscar", "buscar", "🔍", "Buscar circuito"),
-        ("graficos", "graficos", "📊", "Gráficos"),
-    ]
-    visibles = [s for s in secciones_gases if s[0] not in ocultas_gases]
+    visibles = [s for s in SECCIONES_GASES if s[0] not in ocultas_gases]
     if visibles:
         cols_menu = st.columns(2)
         for idx, (sid, icono_base, emoji, label) in enumerate(visibles):
@@ -211,18 +234,19 @@ def _render_inicio():
     with st.expander("⚙️ Personalizar qué ver acá"):
         st.caption("Ocultá lo que no usás en Gases — podés volver a mostrarlo cuando quieras.")
         elegidas = st.multiselect(
-            "Secciones visibles", options=[s[0] for s in secciones_gases],
-            default=[s[0] for s in secciones_gases if s[0] not in ocultas_gases],
-            format_func=lambda sid: next(s[3] for s in secciones_gases if s[0] == sid),
+            "Secciones visibles", options=[s[0] for s in SECCIONES_GASES],
+            default=[s[0] for s in SECCIONES_GASES if s[0] not in ocultas_gases],
+            format_func=lambda sid: next(s[3] for s in SECCIONES_GASES if s[0] == sid),
             key="personalizar_gases",
         )
         if st.button("Guardar", key="personalizar_gases_guardar"):
-            nuevas_ocultas = [s[0] for s in secciones_gases if s[0] not in elegidas]
+            nuevas_ocultas = [s[0] for s in SECCIONES_GASES if s[0] not in elegidas]
             set_secciones_ocultas(persona_actual, "gases", nuevas_ocultas)
             st.rerun()
 
 
 def _render_conectar_desconectar():
+    _titulo_seccion_gases("conectar")
     st.caption(
         "Elegí el gas para conectar o desconectar un tubo en su línea. "
         "El color de arriba de cada tarjeta es el color de identificación de ese gas, según la norma IRAM."
@@ -331,6 +355,8 @@ def _render_cilindros():
         _render_grupo_completo(st.session_state.gases_grupo)
         return
 
+    _titulo_seccion_gases("cilindros")
+
     with st.expander("➕ Nuevo cilindro"):
         st.caption("Si el tubo ya existía y ya tiene un remito de su última carga, lo podés cargar acá mismo.")
         c1, c2, c3 = st.columns(3)
@@ -358,15 +384,9 @@ def _render_cilindros():
             st.rerun()
 
     st.caption("Elegí qué grupo querés ver.")
-    grupos = [
-        ("lleno", "deposito", "📦", "En depósito"),
-        ("vacio_sin_pedido", "vacios", "🦯", "Vacíos"),
-        ("vacio_con_pedido", "pedidos_solicitados", "📞", "Pedidos solicitados"),
-        ("en_relleno", "en_proveedor", "🔄", "En el proveedor"),
-    ]
     todos = dg.get_cilindros()
     cols = st.columns(2)
-    for idx, (clave, icono_base, emoji, titulo_grupo) in enumerate(grupos):
+    for idx, (clave, icono_base, emoji, titulo_grupo) in enumerate(GRUPOS_CILINDROS):
         cantidad = len(_cilindros_del_grupo(clave))
         with cols[idx % 2]:
             icono_html = icono_seccion_html(icono_base, tamano=40, emoji_respaldo=emoji)
@@ -392,11 +412,7 @@ def _render_grupo_completo(grupo):
     """Listado directo de todos los cilindros de un grupo, con un filtro de
     gas de multi-selección (igual formato que elegir riesgos GHS en
     Solventes) — ordenado por última modificación, más reciente primero."""
-    titulos = {
-        "lleno": "📦 En depósito", "vacio_sin_pedido": "🦯 Vacíos",
-        "vacio_con_pedido": "📞 Pedidos solicitados", "en_relleno": "🔄 En el proveedor",
-    }
-    subtitulo_con_icono(titulos[grupo], "")
+    _titulo_grupo_gases(grupo)
 
     st.caption("Gas:")
     cols_gas = st.columns(len(GASES))
@@ -621,6 +637,7 @@ RANGOS_FECHA = {"Todo el tiempo": None, "Últimos 7 días": 7, "Últimos 30 día
 
 
 def _render_historial():
+    _titulo_seccion_gases("historial")
     st.caption("Agrupado por cilindro. Elegí una categoría, un gas y/o un rango de fechas.")
 
     if "hist_categoria" not in st.session_state:
@@ -783,6 +800,7 @@ def _resumen_movimientos(movimientos_visibles):
 
 
 def _render_buscar_circuito():
+    _titulo_seccion_gases("buscar")
     st.caption(
         "Buscá con lo que tengas — cada campo es opcional y va acotando: "
         "solo Gas (todos los tubos de ese gas, con su historial completo), "
@@ -849,6 +867,7 @@ def _render_buscar_circuito():
 
 
 def _render_graficos():
+    _titulo_seccion_gases("graficos")
     st.caption("Duración de los cilindros — pensado para ver de un vistazo cómo vienen rindiendo. Cada gráfico tiene sus propios filtros, independientes entre sí.")
 
     modalidad_map = {"Propio": "propio", "Alquiler": "alquiler"}
@@ -949,12 +968,13 @@ def _render_accion_rapida(tipo):
     si hay un solo cilindro en esa situación, va directo al formulario —
     sin tener que saber en qué grupo de 'Gestión de tubos' está."""
     titulos = {
-        "cambiar": "🔄 Cambiar tubo",
-        "pedir": "📞 Pedir relleno",
-        "reclamo": "📞 Poner reclamo",
-        "confirmar": "✅ Confirmar retiro/canje",
+        "cambiar": ("🔄", "Cambiar tubo"),
+        "pedir": ("📞", "Pedir relleno"),
+        "reclamo": ("📞", "Poner reclamo"),
+        "confirmar": ("✅", "Confirmar retiro/canje"),
     }
-    subtitulo_con_icono(titulos[tipo], "")
+    emoji_tipo, texto_tipo = titulos[tipo]
+    subtitulo_con_icono(texto_tipo, emoji_tipo)
 
     gas_elegido = st.session_state.get("gases_accion_gas")
     if not gas_elegido:

@@ -15,11 +15,11 @@ import streamlit as st
 from datetime import datetime, timedelta
 
 from datos import (
-    get_familias, get_items, get_lotes, get_movimientos,
+    get_items, get_lotes, get_movimientos,
     item_stock, lote_stock, ultimo_chequeo, anular_movimiento, contar_movimientos_lote,
     eliminar_lote, contar_lotes_item, eliminar_item, update_item, update_lote, registrar_chequeo, get_lote_inicial,
     daily_consumption, stock_series, add_item, add_lote, get_envases, add_movimiento,
-    get_catalogo, add_catalogo_entry, get_favoritos_ids, toggle_favorito, conteo_usos_recientes, get_cambios,
+    add_catalogo_entry, get_favoritos_ids, toggle_favorito, conteo_usos_recientes, get_cambios,
     get_secciones_ocultas, set_secciones_ocultas, get_personas,
 )
 from logica import (
@@ -30,7 +30,7 @@ from logica import (
 from ui_helpers import (
     titulo_seccion, subtitulo_con_icono, fila_dos_lados,
     fila_titulo_pictogramas, linea_marca, icono_familia_html, _buscar_imagen, _img_datauri,
-    tarjeta_boton, NIVEL_COLORES, franja_ondulada,
+    tarjeta_boton, NIVEL_COLORES, franja_ondulada, get_familias_cache, get_catalogo_cache,
 )
 
 
@@ -146,10 +146,10 @@ def ordenar_por_prioridad(items, familia_id):
     return items_ordenados, favoritos_ids
 
 def render_familia(familia_id):
-    fam = next(f for f in get_familias() if f["id"] == familia_id)
+    fam = next(f for f in get_familias_cache() if f["id"] == familia_id)
     seccion = st.session_state.seccion_activa
     subseccion = st.session_state.subseccion_activa
-    unica_familia = len([f for f in get_familias() if f["activo"]]) == 1
+    unica_familia = len([f for f in get_familias_cache() if f["activo"]]) == 1
 
     franja_ondulada(
         f"{icono_familia_html(fam, tamano=26)} {fam['nombre']}",
@@ -535,7 +535,7 @@ def render_stock(familia_id):
 
     with st.expander("➕ Nuevo ítem"):
         etiqueta_id = etiqueta_identificador(familia_id)
-        catalogo = get_catalogo(familia_id)
+        catalogo = get_catalogo_cache(familia_id)
 
         def _etiqueta_catalogo(c):
             partes = [c["nombre"]]
