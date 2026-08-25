@@ -145,6 +145,12 @@ st.markdown("""
     /* ---- Escalada de color por nivel de profundidad (tarjeta_boton) ----
        Nivel 0: módulos · Nivel 1: secciones dentro de un módulo ·
        Nivel 2: acciones dentro de una pantalla. */
+    div[class*="st-key-tbnv"] button p {
+        text-align: left !important;
+    }
+    div[class*="st-key-tbnv"] div[data-testid="stButton"] > button {
+        justify-content: flex-start !important;
+    }
     div[class*="st-key-tbnv0"] {
         border: 2px solid #14504A !important;
         border-radius: 14px !important;

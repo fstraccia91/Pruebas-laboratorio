@@ -264,7 +264,7 @@ def tarjeta_boton(icono_html_str, texto, key, nivel=1, ayuda=None, deshabilitado
     key_completo = f"tbnv{nivel}{sufijo_tamano}_{key}"
     tamano_icono = 20 if compacto else 26
     with st.container(border=True, key=key_completo):
-        c_icono, c_texto = st.columns([1, 4])
+        c_icono, c_texto = st.columns([1, 4], gap="small")
         with c_icono:
             st.markdown(
                 f"<div style='text-align:center; font-size:{tamano_icono}px; line-height:1;'>{icono_html_str}</div>",
