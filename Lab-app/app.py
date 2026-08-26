@@ -144,22 +144,20 @@ st.markdown("""
 
     /* ---- Escalada de color por nivel de profundidad (tarjeta_boton) ----
        Nivel 0: módulos · Nivel 1: secciones dentro de un módulo ·
-       Nivel 2: acciones dentro de una pantalla. */
-    div[class*="st-key-tbnv"] button p {
-        text-align: left !important;
+       Nivel 2: acciones dentro de una pantalla. Ícono arriba del texto,
+       con el mínimo espacio posible entre ambos y en los bordes. */
+    div[class*="st-key-tbnv"] div[data-testid="stElementContainer"] {
+        margin-bottom: 0 !important;
     }
     div[class*="st-key-tbnv"] div[data-testid="stButton"] > button {
-        justify-content: flex-start !important;
-    }
-    div[class*="st-key-tbnv"] div[data-testid="stButton"] > button > div {
-        justify-content: flex-start !important;
-        width: 100%;
+        min-height: 1.7rem !important;
+        padding: 2px 6px !important;
     }
     div[class*="st-key-tbnv0"] {
         border: 2px solid #14504A !important;
         border-radius: 14px !important;
         box-shadow: 0 3px 0 #14504A, 0 4px 10px rgba(0,0,0,0.06) !important;
-        padding: 8px 12px !important;
+        padding: 6px 10px !important;
         transition: all 0.12s ease;
     }
     div[class*="st-key-tbnv0"] .stButton > button {
@@ -181,7 +179,7 @@ st.markdown("""
         border: 2px solid #3D8577 !important;
         border-radius: 14px !important;
         box-shadow: 0 3px 0 #3D8577, 0 4px 10px rgba(0,0,0,0.06) !important;
-        padding: 8px 12px !important;
+        padding: 6px 10px !important;
         transition: all 0.12s ease;
     }
     div[class*="st-key-tbnv1"] .stButton > button {
@@ -203,7 +201,7 @@ st.markdown("""
         border: 2px solid #5DADE2 !important;
         border-radius: 14px !important;
         box-shadow: 0 3px 0 #5DADE2, 0 4px 10px rgba(0,0,0,0.06) !important;
-        padding: 8px 12px !important;
+        padding: 6px 10px !important;
         transition: all 0.12s ease;
     }
     div[class*="st-key-tbnv2"] .stButton > button {

@@ -21,6 +21,7 @@ from datos import (
     daily_consumption, stock_series, add_item, add_lote, get_envases, add_movimiento,
     add_catalogo_entry, get_favoritos_ids, toggle_favorito, conteo_usos_recientes, get_cambios,
     get_secciones_ocultas, set_secciones_ocultas, get_personas,
+    _todo_stock_familia, item_stock_bulk, lote_stock_bulk, daily_consumption_bulk, stocks_de_lotes,
 )
 from logica import (
     NOMBRE_LABORATORIO, NOMBRE_SOFTWARE, VERSION_SOFTWARE,
@@ -58,9 +59,10 @@ def elegir_lote(lotes, item, key_prefix, requiere_confirmar=False):
         if st.session_state.get(sel_key) not in ids_disponibles:
             st.session_state[sel_key] = ids_disponibles[0]
 
+    stocks_lotes = stocks_de_lotes(lotes)
     cols = st.columns(min(len(lotes), 3))
     for idx, l in enumerate(lotes):
-        stock_l = lote_stock(l["id"], l["stock_inicial"])
+        stock_l = stocks_lotes[l["id"]]
         elegido = st.session_state.get(sel_key) == l["id"]
         titulo_html = (
             f"<span style='font-weight:600; font-size:0.95rem;'>{l['marca']}</span> "
@@ -520,13 +522,17 @@ def render_stock(familia_id):
 
     items_export = get_items(familia_id)
     if items_export:
+        datos_bulk_stock = _todo_stock_familia(familia_id)
+        lotes_por_item = {}
+        for l in datos_bulk_stock["lotes"]:
+            lotes_por_item.setdefault(l["item_id"], []).append(l)
         filas_export = []
         for i in items_export:
-            for l in get_lotes(i["id"]):
+            for l in lotes_por_item.get(i["id"], []):
                 filas_export.append({
                     "Ítem": i["nombre"], "Unidad": i["unidad"], "Mínimo": i["stock_minimo"],
                     "Marca": l["marca"], "Lote": l["lote"], "Envase": l["envase"],
-                    "Stock actual": lote_stock(l["id"], l["stock_inicial"]),
+                    "Stock actual": lote_stock_bulk(l["id"], l["stock_inicial"], datos_bulk_stock),
                 })
         if filas_export:
             csv_stock = pd.DataFrame(filas_export).to_csv(index=False).encode("utf-8-sig")
@@ -1148,9 +1154,10 @@ def render_graficos(familia_id):
         "Es una aproximación simple (asume consumo constante), no contempla estacionalidad ni picos puntuales."
     )
     est_rows = []
+    datos_bulk_est = _todo_stock_familia(familia_id)
     for i in items:
-        stock = item_stock(i["id"])
-        avg = daily_consumption(i["id"], dias)
+        stock = item_stock_bulk(i["id"], datos_bulk_est)
+        avg = daily_consumption_bulk(i["id"], dias, datos_bulk_est)
         dias_rest = round(stock / avg) if avg > 0 else None
         est_rows.append({
             "Ítem": i["nombre"], "Stock actual": f"{stock} {i['unidad']}",
@@ -1184,9 +1191,10 @@ def render_compras(familia_id):
     )
 
     filas = []
+    datos_bulk_compras = _todo_stock_familia(familia_id)
     for i in items:
-        stock = item_stock(i["id"])
-        avg = daily_consumption(i["id"], dias_consumo)
+        stock = item_stock_bulk(i["id"], datos_bulk_compras)
+        avg = daily_consumption_bulk(i["id"], dias_consumo, datos_bulk_compras)
         dias_restantes = round(stock / avg) if avg > 0 else None
         bajo_minimo = stock <= i["stock_minimo"]
         se_agota_pronto = dias_restantes is not None and dias_restantes <= cobertura

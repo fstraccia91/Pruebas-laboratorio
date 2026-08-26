@@ -548,6 +548,18 @@ def _todo_para_alertas():
     return {"cilindros": cilindros, "movs": movs_por_cilindro, "cargas": cargas_por_cilindro}
 
 
+def cargas_con_movimientos_bulk(cilindro_id, datos_bulk):
+    """Versión en memoria de cargas_con_movimientos, usando datos ya
+    traídos por _todo_para_alertas() — para no consultar la base carga por
+    carga cuando el Buscador trae varios cilindros con mucho historial."""
+    cargas_c = sorted(datos_bulk["cargas"].get(cilindro_id, []), key=lambda c: c["fecha_inicio"], reverse=True)
+    resultado = []
+    for carga in cargas_c:
+        movs = [m for m in datos_bulk["movs"].get(cilindro_id, []) if m.get("carga_id") == carga["id"] and not m.get("anulado")]
+        resultado.append((carga.get("remito"), movs))
+    return resultado
+
+
 def alertas_stock_bajo(minimo=1, datos_bulk=None):
     """Gases con `minimo` o menos cilindros llenos disponibles en depósito
     (sin contar el que esté conectado) — para avisar antes de quedarse sin
@@ -585,6 +597,56 @@ def alertas_relleno_demorado(dias_limite=30, datos_bulk=None):
         if dias is not None and dias >= dias_limite:
             resultado.append((c, dias))
     return resultado
+
+
+def pedido_activo_bulk(cilindro_id, datos_bulk):
+    """Versión en memoria de pedido_activo — usa datos ya traídos por
+    _todo_para_alertas(), para no repetir consultas cuando hay que
+    calcularlo para muchos cilindros a la vez (como en 'Estado de los
+    tubos' o en los accesos rápidos de reclamo/confirmar)."""
+    cargas_c = datos_bulk["cargas"].get(cilindro_id, [])
+    carga_activa = next((cg for cg in cargas_c if cg.get("fecha_fin") is None), None)
+    if not carga_activa:
+        return None
+    movs_c = [m for m in datos_bulk["movs"].get(cilindro_id, []) if m.get("carga_id") == carga_activa["id"]]
+    for h in reversed(movs_c):
+        if h.get("anulado"):
+            continue
+        if h["tipo"] == "pedido":
+            return h
+        if h["tipo"] in ("enviado_a_rellenar", "canje"):
+            return None
+    return None
+
+
+def reclamos_activos_bulk(cilindro_id, datos_bulk):
+    """Ídem, para reclamos_activos."""
+    cargas_c = datos_bulk["cargas"].get(cilindro_id, [])
+    carga_activa = next((cg for cg in cargas_c if cg.get("fecha_fin") is None), None)
+    if not carga_activa:
+        return []
+    movs_c = [m for m in datos_bulk["movs"].get(cilindro_id, []) if m.get("carga_id") == carga_activa["id"]]
+    reclamos = [m for m in movs_c if m["tipo"] == "reclamo" and not m.get("anulado")]
+    return list(reversed(reclamos))
+
+
+def remito_envio_vigente_bulk(cilindro_id, datos_bulk):
+    """Ídem, para remito_envio_vigente."""
+    cargas_c = datos_bulk["cargas"].get(cilindro_id, [])
+    carga_activa = next((cg for cg in cargas_c if cg.get("fecha_fin") is None), None)
+    if not carga_activa:
+        return None
+    movs_c = [m for m in datos_bulk["movs"].get(cilindro_id, []) if m.get("carga_id") == carga_activa["id"]]
+    envios = [m for m in movs_c if m["tipo"] == "enviado_a_rellenar" and not m.get("anulado")]
+    return envios[-1].get("remito_envio") if envios else None
+
+
+def ultimo_movimiento_bulk(cilindro_id, datos_bulk):
+    """Ídem, para ultimo_movimiento."""
+    movs = [m for m in datos_bulk["movs"].get(cilindro_id, []) if not m.get("anulado")]
+    if not movs:
+        return None
+    return max(movs, key=lambda m: m["fecha"])
 
 
 def alertas_pedido_sin_resolver(dias_limite=7, datos_bulk=None):

@@ -341,15 +341,18 @@ def _render_gestionar_linea(linea_id):
             st.rerun()
 
 
-def _cilindros_del_grupo(grupo):
-    """Traduce los 4 grupos visuales de 'Gestión de tubos' a cilindros
+def _cilindros_del_grupo(grupo, datos_bulk):
+    """Traduce los 4 grupos visuales de 'Estado de los tubos' a cilindros
     reales — 'vacio_sin_pedido'/'vacio_con_pedido' son ambos estado='vacio'
-    por dentro, separados según si ya tienen un pedido activo o no."""
+    por dentro, separados según si ya tienen un pedido activo o no.
+    Recibe datos_bulk (de dg._todo_para_alertas()) para no consultar la
+    base de datos cilindro por cilindro."""
+    cilindros = datos_bulk["cilindros"]
     if grupo == "vacio_sin_pedido":
-        return [c for c in dg.get_cilindros(estado="vacio") if dg.pedido_activo(c["id"]) is None]
+        return [c for c in cilindros if c["estado"] == "vacio" and dg.pedido_activo_bulk(c["id"], datos_bulk) is None]
     if grupo == "vacio_con_pedido":
-        return [c for c in dg.get_cilindros(estado="vacio") if dg.pedido_activo(c["id"]) is not None]
-    return dg.get_cilindros(estado=grupo)
+        return [c for c in cilindros if c["estado"] == "vacio" and dg.pedido_activo_bulk(c["id"], datos_bulk) is not None]
+    return [c for c in cilindros if c["estado"] == grupo]
 
 
 def _render_cilindros():
@@ -386,10 +389,11 @@ def _render_cilindros():
             st.rerun()
 
     st.caption("Elegí qué grupo querés ver.")
-    todos = dg.get_cilindros()
+    datos_bulk = dg._todo_para_alertas()
+    todos = datos_bulk["cilindros"]
     cols = st.columns(2)
     for idx, (clave, icono_base, emoji, titulo_grupo) in enumerate(GRUPOS_CILINDROS):
-        cantidad = len(_cilindros_del_grupo(clave))
+        cantidad = len(_cilindros_del_grupo(clave, datos_bulk))
         with cols[idx % 2]:
             icono_html = icono_seccion_html(icono_base, tamano=40, emoji_respaldo=emoji)
             if tarjeta_boton(icono_html, f"{titulo_grupo} ({cantidad})", key=f"grupo_{clave}", nivel=2):
@@ -427,11 +431,12 @@ def _render_grupo_completo(grupo):
             st.session_state[key_check] = True
         if cols_gas[idx].checkbox(gas, key=key_check):
             gases_sel.append(gas)
-    cilindros_grupo = [c for c in _cilindros_del_grupo(grupo) if c["gas"] in gases_sel]
+    cilindros_grupo_todos_gases_bulk = dg._todo_para_alertas()
+    cilindros_grupo = [c for c in _cilindros_del_grupo(grupo, cilindros_grupo_todos_gases_bulk) if c["gas"] in gases_sel]
 
     anotados = []
     for c in cilindros_grupo:
-        ultimo = dg.ultimo_movimiento(c["id"])
+        ultimo = dg.ultimo_movimiento_bulk(c["id"], cilindros_grupo_todos_gases_bulk)
         anotados.append((ultimo["fecha"] if ultimo else "", c, ultimo))
     anotados.sort(key=lambda t: t[0], reverse=True)
 
@@ -450,23 +455,23 @@ def _render_grupo_completo(grupo):
                 st.markdown(f"<span style='font-weight:600;'>{_etiqueta_cilindro(c)}</span>", unsafe_allow_html=True)
 
             if grupo == "vacio_con_pedido":
-                pedido = dg.pedido_activo(c["id"])
+                pedido = dg.pedido_activo_bulk(c["id"], cilindros_grupo_todos_gases_bulk)
                 if pedido:
                     st.caption(
                         f"📞 Pedido N° {pedido.get('numero_pedido') or '—'} — "
                         f"por {pedido.get('analista') or '—'} · {pedido['fecha'][:16].replace('T', ' ')}"
                     )
-                reclamos = dg.reclamos_activos(c["id"])
+                reclamos = dg.reclamos_activos_bulk(c["id"], cilindros_grupo_todos_gases_bulk)
                 if reclamos:
                     with st.expander(f"📞 {len(reclamos)} reclamo{'s' if len(reclamos) != 1 else ''} en este pedido"):
                         for r in reclamos:
                             st.markdown(f"**{r['fecha'][:16].replace('T', ' ')}** — {r.get('motivo') or 'sin motivo'}")
                             st.caption(f"Por {r.get('analista') or '—'}" + (f" · {r['nota']}" if r.get('nota') else ""))
             elif grupo == "en_relleno":
-                remito_envio_actual = dg.remito_envio_vigente(c["id"])
+                remito_envio_actual = dg.remito_envio_vigente_bulk(c["id"], cilindros_grupo_todos_gases_bulk)
                 if remito_envio_actual:
                     st.caption(f"🧾 Remito de devolución (este viaje): {remito_envio_actual}")
-                reclamos = dg.reclamos_activos(c["id"])
+                reclamos = dg.reclamos_activos_bulk(c["id"], cilindros_grupo_todos_gases_bulk)
                 if reclamos:
                     with st.expander(f"📞 {len(reclamos)} reclamo{'s' if len(reclamos) != 1 else ''} en este viaje"):
                         for r in reclamos:
@@ -761,6 +766,7 @@ def _render_buscar_circuito():
         return
 
     lineas_por_id = {l["id"]: l for l in dg.get_lineas()}
+    datos_bulk_buscar = dg._todo_para_alertas()
     st.caption(f"{len(resultados)} cilindro{'s' if len(resultados) != 1 else ''} encontrado{'s' if len(resultados) != 1 else ''}.")
 
     for cilindro, movimientos, acotado_por_remito in resultados:
@@ -784,7 +790,7 @@ def _render_buscar_circuito():
                 _tarjeta_movimiento(m, lineas_por_id, cilindro["id"])
         else:
             # Historial completo: agrupar por carga, la más reciente primero.
-            for remito_carga, movs_carga in dg.cargas_con_movimientos(cilindro["id"]):
+            for remito_carga, movs_carga in dg.cargas_con_movimientos_bulk(cilindro["id"], datos_bulk_buscar):
                 if not movs_carga:
                     continue
                 dias = dg._dias_desde(movs_carga[0]["fecha"])
@@ -974,14 +980,19 @@ def _accion_rapida_reclamo():
     TODOS los gases que están esperando (con pedido hecho, sin retirar
     todavía) o ya en el proveedor — porque un mismo llamado de reclamo
     suele cubrir varios gases a la vez, no uno solo."""
+    datos_bulk = dg._todo_para_alertas()
     candidatos = []
-    for c in dg.get_cilindros(estado="vacio"):
-        pedido = dg.pedido_activo(c["id"])
+    for c in datos_bulk["cilindros"]:
+        if c["estado"] != "vacio":
+            continue
+        pedido = dg.pedido_activo_bulk(c["id"], datos_bulk)
         if pedido:
             candidatos.append((c, "esperando_retiro", pedido.get("numero_pedido"), pedido["fecha"]))
-    for c in dg.get_cilindros(estado="en_relleno"):
-        remito_envio = dg.remito_envio_vigente(c["id"])
-        ultimo = dg.ultimo_movimiento(c["id"])
+    for c in datos_bulk["cilindros"]:
+        if c["estado"] != "en_relleno":
+            continue
+        remito_envio = dg.remito_envio_vigente_bulk(c["id"], datos_bulk)
+        ultimo = dg.ultimo_movimiento_bulk(c["id"], datos_bulk)
         candidatos.append((c, "en_proveedor", remito_envio, ultimo["fecha"] if ultimo else ""))
 
     if not candidatos:
@@ -1018,9 +1029,12 @@ def _accion_rapida_confirmar():
     el mismo pedido. Se puede cargar un remito una sola vez y aplicarlo a
     todos los tubos de ese pedido juntos, o confirmar cada uno aparte con
     su propio remito si hiciera falta (no siempre viene todo junto)."""
+    datos_bulk = dg._todo_para_alertas()
     agrupado = {}
-    for c in dg.get_cilindros(estado="vacio"):
-        pedido = dg.pedido_activo(c["id"])
+    for c in datos_bulk["cilindros"]:
+        if c["estado"] != "vacio":
+            continue
+        pedido = dg.pedido_activo_bulk(c["id"], datos_bulk)
         if not pedido:
             continue
         numero = pedido.get("numero_pedido") or "(sin número)"

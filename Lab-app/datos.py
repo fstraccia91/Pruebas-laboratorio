@@ -70,6 +70,75 @@ def get_movimientos(item_id=None):
     return res.data
 
 
+def _todo_stock_familia(familia_id):
+    """Trae, en pocas consultas fijas, todos los ítems, lotes y movimientos
+    de una familia — para no consultar la base de a uno por vez cuando hay
+    que calcular el stock/consumo de TODOS juntos (como en Compras, la
+    Estimación de agotamiento, o el CSV de Gestionar Stock). Mismo patrón
+    que _todo_para_alertas() en Gases."""
+    sb = get_client()
+    items = sb.table("items").select("*").eq("familia_id", familia_id).execute().data
+    ids_items = [i["id"] for i in items]
+    if not ids_items:
+        return {"items": items, "lotes": [], "movs_por_item": {}, "movs_por_lote": {}}
+
+    lotes = sb.table("lotes").select("*").in_("item_id", ids_items).execute().data
+    movs = sb.table("movimientos").select("item_id,lote_id,tipo,cantidad,anulado,fecha").in_("item_id", ids_items).execute().data
+
+    movs_por_item, movs_por_lote = {}, {}
+    for m in movs:
+        movs_por_item.setdefault(m["item_id"], []).append(m)
+        if m.get("lote_id"):
+            movs_por_lote.setdefault(m["lote_id"], []).append(m)
+
+    return {"items": items, "lotes": lotes, "movs_por_item": movs_por_item, "movs_por_lote": movs_por_lote}
+
+
+def item_stock_bulk(item_id, datos_bulk):
+    """Versión en memoria de item_stock, usando datos ya traídos por
+    _todo_stock_familia()."""
+    lotes_item = [l for l in datos_bulk["lotes"] if l["item_id"] == item_id]
+    inicial = sum(l["stock_inicial"] or 0 for l in lotes_item)
+    movs = datos_bulk["movs_por_item"].get(item_id, [])
+    entradas = sum(m["cantidad"] for m in movs if m["tipo"] == "in" and not m.get("anulado", False))
+    salidas = sum(m["cantidad"] for m in movs if m["tipo"] == "out" and not m.get("anulado", False))
+    ajustes = sum(m["cantidad"] for m in movs if m["tipo"] == "ajuste" and not m.get("anulado", False))
+    return round(inicial + entradas - salidas + ajustes, 2)
+
+
+def lote_stock_bulk(lote_id, stock_inicial, datos_bulk):
+    """Ídem, para lote_stock."""
+    movs = datos_bulk["movs_por_lote"].get(lote_id, [])
+    entradas = sum(m["cantidad"] for m in movs if m["tipo"] == "in" and not m.get("anulado", False))
+    salidas = sum(m["cantidad"] for m in movs if m["tipo"] == "out" and not m.get("anulado", False))
+    ajustes = sum(m["cantidad"] for m in movs if m["tipo"] == "ajuste" and not m.get("anulado", False))
+    return round((stock_inicial or 0) + entradas - salidas + ajustes, 2)
+
+
+def daily_consumption_bulk(item_id, days, datos_bulk):
+    """Ídem, para daily_consumption."""
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    movs = datos_bulk["movs_por_item"].get(item_id, [])
+    total = sum(m["cantidad"] for m in movs if m["tipo"] == "out" and not m.get("anulado", False) and m["fecha"] >= cutoff)
+    return total / days
+
+
+def stocks_de_lotes(lotes):
+    """Para una lista de lotes (ya traídos), calcula el stock de todos en
+    una sola consulta — en vez de lote por lote. Pensada para elegir_lote,
+    que se usa en Usar y Chequear Stock (las pantallas más frecuentes).
+    Devuelve {lote_id: stock}."""
+    sb = get_client()
+    ids_lotes = [l["id"] for l in lotes]
+    if not ids_lotes:
+        return {}
+    movs = sb.table("movimientos").select("lote_id,tipo,cantidad,anulado").in_("lote_id", ids_lotes).execute().data
+    movs_por_lote = {}
+    for m in movs:
+        movs_por_lote.setdefault(m["lote_id"], []).append(m)
+    return {l["id"]: lote_stock_bulk(l["id"], l["stock_inicial"], {"movs_por_lote": movs_por_lote}) for l in lotes}
+
+
 def item_stock(item_id):
     sb = get_client()
     lotes = sb.table("lotes").select("stock_inicial").eq("item_id", item_id).execute().data

@@ -252,27 +252,24 @@ def franja_ondulada(titulo_html, subtitulo="", color="#5DADE2", tipo_onda=1):
 
 
 def tarjeta_boton(icono_html_str, texto, key, nivel=1, ayuda=None, deshabilitado=False, compacto=False):
-    """Tarjeta con ícono AL COSTADO del texto (no arriba) adentro de un
-    recuadro con borde de color (según el nivel de profundidad de
-    navegación) y relieve — el botón real vive dentro del mismo contenedor,
-    sin su propio borde, para que se vea como una sola pieza.
-    compacto=True la hace más chica — pensada para accesos rápidos, no
-    para la navegación principal.
+    """Tarjeta con ícono ARRIBA del texto (con el mínimo espacio posible
+    entre ambos) adentro de un recuadro con borde de color (según el nivel
+    de profundidad de navegación) y relieve — el botón real vive dentro
+    del mismo contenedor, sin su propio borde, para que se vea como una
+    sola pieza. compacto=True la hace más chica — pensada para accesos
+    rápidos, no para la navegación principal.
     Devuelve True si se tocó (nunca True si deshabilitado=True). El CSS que
     le da el estilo vive en app.py (se aplica una sola vez, de forma global)."""
     sufijo_tamano = "sm" if compacto else ""
     key_completo = f"tbnv{nivel}{sufijo_tamano}_{key}"
-    tamano_icono = 20 if compacto else 26
+    tamano_icono = 18 if compacto else 24
     with st.container(border=True, key=key_completo):
-        c_icono, c_texto = st.columns([1, 4], gap="small")
-        with c_icono:
-            st.markdown(
-                f"<div style='text-align:center; font-size:{tamano_icono}px; line-height:1;'>{icono_html_str}</div>",
-                unsafe_allow_html=True,
-            )
-        with c_texto:
-            tocado = st.button(
-                texto, key=f"btn_{key_completo}", use_container_width=True,
-                help=ayuda, disabled=deshabilitado,
+        st.markdown(
+            f"<div style='text-align:center; font-size:{tamano_icono}px; line-height:1; margin:0; padding:0;'>{icono_html_str}</div>",
+            unsafe_allow_html=True,
+        )
+        tocado = st.button(
+            texto, key=f"btn_{key_completo}", use_container_width=True,
+            help=ayuda, disabled=deshabilitado,
             )
     return tocado
