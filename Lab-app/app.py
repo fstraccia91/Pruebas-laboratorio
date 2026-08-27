@@ -189,6 +189,18 @@ st.markdown("""
     }
     div[class*="st-key-tbnv"] .tbnv-titulo-visual {
         line-height: 1.15;
+        font-size: 0.85rem !important;
+        max-width: 100%;
+        overflow-wrap: break-word;
+        word-break: break-word;
+    }
+    div[class*="st-key-tbnv0"] .tbnv-titulo-visual, div[class*="st-key-tbnv1"] .tbnv-titulo-visual {
+        font-size: 0.95rem !important;
+    }
+    div[class*="st-key-tbnv0sm"] .tbnv-titulo-visual,
+    div[class*="st-key-tbnv1sm"] .tbnv-titulo-visual,
+    div[class*="st-key-tbnv2sm"] .tbnv-titulo-visual {
+        font-size: 0.8rem !important;
     }
     div[class*="st-key-tbnv0"] {
         border: 2px solid #14504A !important;
