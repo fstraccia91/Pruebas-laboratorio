@@ -144,34 +144,67 @@ st.markdown("""
 
     /* ---- Escalada de color por nivel de profundidad (tarjeta_boton) ----
        Nivel 0: módulos · Nivel 1: secciones dentro de un módulo ·
-       Nivel 2: acciones dentro de una pantalla. Ícono arriba del texto,
-       con el mínimo espacio posible entre ambos y en los bordes. */
+       Nivel 2: acciones dentro de una pantalla. El botón real (en flujo
+       normal, con una altura mínima fija) es lo que le da tamaño a la
+       tarjeta — no se pelea contra la altura que Streamlit le pone al
+       contenedor por su cuenta, que siempre termina ganando. El ícono+
+       texto (solo dibujo, no clickeable) flota ENCIMA del botón con
+       position:absolute, así el botón real queda cubriendo TODA la
+       tarjeta, tocable en cualquier parte — el ícono incluido — clave en
+       el celular. */
+    div[class*="st-key-tbnv"] {
+        position: relative !important;
+    }
     div[class*="st-key-tbnv"] div[data-testid="stElementContainer"] {
-        margin-bottom: 0 !important;
+        margin: -15px !important;
     }
     div[class*="st-key-tbnv"] div[data-testid="stButton"] > button {
-        min-height: 1.7rem !important;
-        padding: 2px 6px !important;
+        width: calc(100% + 30px) !important;
+        min-height: 118px !important;
+        padding: 0 !important;
+        font-size: 0 !important;
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    div[class*="st-key-tbnv"] div[data-testid="stButton"] > button * {
+        font-size: 0 !important;
+        line-height: 0 !important;
+    }
+    div[class*="st-key-tbnv0sm"] div[data-testid="stButton"] > button,
+    div[class*="st-key-tbnv1sm"] div[data-testid="stButton"] > button,
+    div[class*="st-key-tbnv2sm"] div[data-testid="stButton"] > button {
+        min-height: 86px !important;
+    }
+    div[class*="st-key-tbnv"] div[data-testid="stElementContainer"]:has(.tbnv-titulo-visual) {
+        position: absolute !important;
+        top: 15px !important; left: 15px !important; right: 15px !important; bottom: 15px !important;
+        margin: 0 !important;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        z-index: 1;
+    }
+    div[class*="st-key-tbnv"] .tbnv-titulo-visual {
+        line-height: 1.15;
     }
     div[class*="st-key-tbnv0"] {
         border: 2px solid #14504A !important;
         border-radius: 14px !important;
         box-shadow: 0 3px 0 #14504A, 0 4px 10px rgba(0,0,0,0.06) !important;
-        padding: 6px 10px !important;
         transition: all 0.12s ease;
     }
-    div[class*="st-key-tbnv0"] .stButton > button {
-        border: none !important;
-        background: transparent !important;
+    div[class*="st-key-tbnv0"] .tbnv-titulo-visual {
         color: #14504A !important;
-        box-shadow: none !important;
     }
     div[class*="st-key-tbnv0"]:hover, div[class*="st-key-tbnv0"]:active {
         background: #14504A !important;
         transform: translateY(2px);
         box-shadow: 0 1px 0 #14504A, 0 2px 6px rgba(0,0,0,0.08) !important;
     }
-    div[class*="st-key-tbnv0"]:hover .stButton > button, div[class*="st-key-tbnv0"]:active .stButton > button {
+    div[class*="st-key-tbnv0"]:hover .tbnv-titulo-visual, div[class*="st-key-tbnv0"]:active .tbnv-titulo-visual {
         color: white !important;
     }
 
@@ -179,21 +212,17 @@ st.markdown("""
         border: 2px solid #3D8577 !important;
         border-radius: 14px !important;
         box-shadow: 0 3px 0 #3D8577, 0 4px 10px rgba(0,0,0,0.06) !important;
-        padding: 6px 10px !important;
         transition: all 0.12s ease;
     }
-    div[class*="st-key-tbnv1"] .stButton > button {
-        border: none !important;
-        background: transparent !important;
+    div[class*="st-key-tbnv1"] .tbnv-titulo-visual {
         color: #3D8577 !important;
-        box-shadow: none !important;
     }
     div[class*="st-key-tbnv1"]:hover, div[class*="st-key-tbnv1"]:active {
         background: #3D8577 !important;
         transform: translateY(2px);
         box-shadow: 0 1px 0 #3D8577, 0 2px 6px rgba(0,0,0,0.08) !important;
     }
-    div[class*="st-key-tbnv1"]:hover .stButton > button, div[class*="st-key-tbnv1"]:active .stButton > button {
+    div[class*="st-key-tbnv1"]:hover .tbnv-titulo-visual, div[class*="st-key-tbnv1"]:active .tbnv-titulo-visual {
         color: white !important;
     }
 
@@ -201,21 +230,17 @@ st.markdown("""
         border: 2px solid #5DADE2 !important;
         border-radius: 14px !important;
         box-shadow: 0 3px 0 #5DADE2, 0 4px 10px rgba(0,0,0,0.06) !important;
-        padding: 6px 10px !important;
         transition: all 0.12s ease;
     }
-    div[class*="st-key-tbnv2"] .stButton > button {
-        border: none !important;
-        background: transparent !important;
+    div[class*="st-key-tbnv2"] .tbnv-titulo-visual {
         color: #2874A6 !important;
-        box-shadow: none !important;
     }
     div[class*="st-key-tbnv2"]:hover, div[class*="st-key-tbnv2"]:active {
         background: #5DADE2 !important;
         transform: translateY(2px);
         box-shadow: 0 1px 0 #5DADE2, 0 2px 6px rgba(0,0,0,0.08) !important;
     }
-    div[class*="st-key-tbnv2"]:hover .stButton > button, div[class*="st-key-tbnv2"]:active .stButton > button {
+    div[class*="st-key-tbnv2"]:hover .tbnv-titulo-visual, div[class*="st-key-tbnv2"]:active .tbnv-titulo-visual {
         color: white !important;
     }
 
