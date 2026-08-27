@@ -1024,12 +1024,14 @@ def _accion_rapida_reclamo():
 
 
 def _accion_rapida_confirmar():
-    """Sin elegir gas primero: agrupado por número de pedido, porque una
-    misma visita del proveedor puede traer tubos de gases distintos bajo
-    el mismo pedido. Se puede cargar un remito una sola vez y aplicarlo a
-    todos los tubos de ese pedido juntos, o confirmar cada uno aparte con
-    su propio remito si hiciera falta (no siempre viene todo junto)."""
+    """Cubre TODO lo que hay que confirmarle al proveedor para un tubo,
+    en las dos puntas: que se lo llevaron (o canjearon) — agrupado por
+    número de pedido, porque una misma visita puede traer tubos de gases
+    distintos — y, para los propios, que YA VOLVIERON del proveedor y hay
+    que ponerles el remito y mandarlos de vuelta a depósito. Sin elegir
+    gas primero en ninguno de los dos casos."""
     datos_bulk = dg._todo_para_alertas()
+
     agrupado = {}
     for c in datos_bulk["cilindros"]:
         if c["estado"] != "vacio":
@@ -1040,12 +1042,66 @@ def _accion_rapida_confirmar():
         numero = pedido.get("numero_pedido") or "(sin número)"
         agrupado.setdefault(numero, []).append(c)
 
-    if not agrupado:
-        st.info("No hay ningún pedido pendiente de confirmar ahora mismo.")
+    en_relleno = [c for c in datos_bulk["cilindros"] if c["estado"] == "en_relleno"]
+
+    if not agrupado and not en_relleno:
+        st.info("No hay ningún pedido pendiente de confirmar, ni tubos esperando volver del proveedor, ahora mismo.")
         return
 
     numero_elegido = st.session_state.get("accion_rapida_pedido_elegido")
-    if not numero_elegido or numero_elegido not in agrupado:
+
+    if numero_elegido and numero_elegido in agrupado:
+        if st.button("← Volver", key="accion_rapida_volver_pedido"):
+            st.session_state.accion_rapida_pedido_elegido = None
+            st.rerun()
+
+        items = agrupado[numero_elegido]
+        st.markdown(f"**Pedido N° {numero_elegido}** — {len(items)} tubo{'s' if len(items) != 1 else ''}")
+
+        if len(items) > 1:
+            st.caption("Si todos vienen con el mismo remito, cargalo acá una sola vez:")
+            remito_comun = st.text_input("N° de remito (para todos)", key=f"remito_comun_{numero_elegido}")
+            if st.button("✅ Confirmar todos con este remito", key=f"confirmar_todos_{numero_elegido}", type="primary"):
+                if not remito_comun.strip():
+                    st.error("Ingresá el N° de remito antes de confirmar.")
+                else:
+                    for c in items:
+                        if c.get("modalidad") == "alquiler":
+                            dg.confirmar_canje(c["id"], st.session_state.analista_actual, remito_comun.strip())
+                        else:
+                            dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual, remito_comun.strip())
+                    st.session_state.accion_rapida_pedido_elegido = None
+                    st.session_state.gases_accion_rapida = None
+                    _confirmar(f"✅ Confirmados los {len(items)} tubos del pedido N° {numero_elegido} (remito {remito_comun.strip()}).")
+                    st.rerun()
+            st.divider()
+            st.caption("¿Alguno viene con remito distinto? Confirmalo acá aparte:")
+
+        for c in items:
+            with st.container(border=True):
+                st.markdown(f"**{_etiqueta_cilindro(c)}** ({MODALIDAD_LABEL.get(c.get('modalidad'), c.get('modalidad'))})")
+                if c.get("modalidad") == "alquiler":
+                    remito_individual = st.text_input("N° de remito del canje", key=f"remito_ind_{c['id']}")
+                    if st.button("🔄 Confirmar canje", key=f"canje_ind_{c['id']}"):
+                        if not remito_individual.strip():
+                            st.error("Ingresá el N° de remito antes de confirmar.")
+                        else:
+                            dg.confirmar_canje(c["id"], st.session_state.analista_actual, remito_individual.strip())
+                            _confirmar(f"✅ {_etiqueta_cilindro(c)} canjeado (remito {remito_individual.strip()}).")
+                            st.rerun()
+                else:
+                    remito_individual = st.text_input("N° de remito de devolución", key=f"remito_ind_{c['id']}")
+                    if st.button("📤 Confirmar que se envió", key=f"envio_ind_{c['id']}"):
+                        if not remito_individual.strip():
+                            st.error("Ingresá el N° de remito antes de confirmar.")
+                        else:
+                            dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual, remito_individual.strip())
+                            _confirmar(f"✅ {_etiqueta_cilindro(c)} marcado como enviado (remito {remito_individual.strip()}).")
+                            st.rerun()
+        return
+
+    if agrupado:
+        st.markdown("**📤 Pedidos esperando que los retiren o canjeen**")
         st.caption("Elegí el número de pedido con el que vino el proveedor:")
         for numero, items in agrupado.items():
             resumen = ", ".join(_etiqueta_cilindro(c) for c in items)
@@ -1053,52 +1109,23 @@ def _accion_rapida_confirmar():
             if st.button(etiqueta_boton, key=f"elegir_pedido_{numero}", use_container_width=True):
                 st.session_state.accion_rapida_pedido_elegido = numero
                 st.rerun()
-        return
 
-    if st.button("← Elegir otro pedido", key="accion_rapida_volver_pedido"):
-        st.session_state.accion_rapida_pedido_elegido = None
-        st.rerun()
-
-    items = agrupado[numero_elegido]
-    st.markdown(f"**Pedido N° {numero_elegido}** — {len(items)} tubo{'s' if len(items) != 1 else ''}")
-
-    if len(items) > 1:
-        st.caption("Si todos vienen con el mismo remito, cargalo acá una sola vez:")
-        remito_comun = st.text_input("N° de remito (para todos)", key=f"remito_comun_{numero_elegido}")
-        if st.button("✅ Confirmar todos con este remito", key=f"confirmar_todos_{numero_elegido}", type="primary"):
-            if not remito_comun.strip():
-                st.error("Ingresá el N° de remito antes de confirmar.")
-            else:
-                for c in items:
-                    if c.get("modalidad") == "alquiler":
-                        dg.confirmar_canje(c["id"], st.session_state.analista_actual, remito_comun.strip())
-                    else:
-                        dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual, remito_comun.strip())
-                st.session_state.accion_rapida_pedido_elegido = None
-                st.session_state.gases_accion_rapida = None
-                _confirmar(f"✅ Confirmados los {len(items)} tubos del pedido N° {numero_elegido} (remito {remito_comun.strip()}).")
-                st.rerun()
-        st.divider()
-        st.caption("¿Alguno viene con remito distinto? Confirmalo acá aparte:")
-
-    for c in items:
-        with st.container(border=True):
-            st.markdown(f"**{_etiqueta_cilindro(c)}** ({MODALIDAD_LABEL.get(c.get('modalidad'), c.get('modalidad'))})")
-            if c.get("modalidad") == "alquiler":
-                remito_individual = st.text_input("N° de remito del canje", key=f"remito_ind_{c['id']}")
-                if st.button("🔄 Confirmar canje", key=f"canje_ind_{c['id']}"):
-                    if not remito_individual.strip():
+    if en_relleno:
+        if agrupado:
+            st.divider()
+        st.markdown("**📥 Tubos en el proveedor, esperando confirmar que volvieron**")
+        st.caption("Solo para propios — un tubo de alquiler nunca pasa por acá, se resuelve directo con el canje de arriba.")
+        for c in en_relleno:
+            with st.container(border=True):
+                st.markdown(f"**{_etiqueta_cilindro(c)}**")
+                remito_envio_actual = dg.remito_envio_vigente_bulk(c["id"], datos_bulk)
+                if remito_envio_actual:
+                    st.caption(f"🧾 Remito de devolución (este viaje): {remito_envio_actual}")
+                remito_recepcion = st.text_input("N° de remito (obligatorio)", key=f"remito_vuelta_{c['id']}")
+                if st.button("✅ Confirmar que volvió", key=f"confirmar_vuelta_{c['id']}", type="primary"):
+                    if not remito_recepcion.strip():
                         st.error("Ingresá el N° de remito antes de confirmar.")
                     else:
-                        dg.confirmar_canje(c["id"], st.session_state.analista_actual, remito_individual.strip())
-                        _confirmar(f"✅ {_etiqueta_cilindro(c)} canjeado (remito {remito_individual.strip()}).")
-                        st.rerun()
-            else:
-                remito_individual = st.text_input("N° de remito de devolución", key=f"remito_ind_{c['id']}")
-                if st.button("📤 Confirmar que se envió", key=f"envio_ind_{c['id']}"):
-                    if not remito_individual.strip():
-                        st.error("Ingresá el N° de remito antes de confirmar.")
-                    else:
-                        dg.enviar_a_rellenar(c["id"], st.session_state.analista_actual, remito_individual.strip())
-                        _confirmar(f"✅ {_etiqueta_cilindro(c)} marcado como enviado (remito {remito_individual.strip()}).")
+                        dg.recibir_de_relleno(c["id"], st.session_state.analista_actual, remito_recepcion.strip())
+                        _confirmar(f"✅ {_etiqueta_cilindro(c)} de vuelta en depósito, lleno (remito {remito_recepcion.strip()}).")
                         st.rerun()
