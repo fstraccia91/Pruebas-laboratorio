@@ -207,7 +207,7 @@ def _render_inicio():
         ("cambiar", "🔄", "Cambiar tubo"),
         ("pedir", "📞", "Pedir relleno"),
         ("reclamo", "📞", "Poner reclamo"),
-        ("confirmar", "✅", "Confirmar retiro/canje"),
+        ("confirmar", "✅", "Confirmar retiro/canje/recepción"),
     ]
     cols_rapidas = st.columns(2)
     for idx, (clave_accion, emoji, etiqueta_accion) in enumerate(acciones_rapidas):
@@ -905,7 +905,7 @@ def _render_graficos():
 def _render_accion_rapida(tipo):
     """Las 4 tareas del día a día. 'Cambiar tubo' y 'Pedir relleno' piden
     el gas primero (siguen siendo tareas de UN gas por vez). 'Poner
-    reclamo' y 'Confirmar retiro/canje' NO piden gas — un mismo llamado o
+    reclamo' y 'Confirmar retiro/canje/recepción' NO piden gas — un mismo llamado o
     una misma visita del proveedor suele cubrir varios gases juntos, así
     que tienen su propia lógica (ver _accion_rapida_reclamo y
     _accion_rapida_confirmar)."""
@@ -913,7 +913,7 @@ def _render_accion_rapida(tipo):
         "cambiar": ("🔄", "Cambiar tubo"),
         "pedir": ("📞", "Pedir relleno"),
         "reclamo": ("📞", "Poner reclamo"),
-        "confirmar": ("✅", "Confirmar retiro/canje"),
+        "confirmar": ("✅", "Confirmar retiro/canje/recepción"),
     }
     emoji_tipo, texto_tipo = titulos[tipo]
     subtitulo_con_icono(texto_tipo, emoji_tipo)
