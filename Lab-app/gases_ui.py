@@ -254,15 +254,22 @@ def _render_conectar_desconectar():
         "El color de arriba de cada tarjeta es el color de identificación de ese gas, según la norma IRAM."
     )
     lineas = dg.get_lineas()
+    todos_cilindros = dg.get_cilindros()
     cols = st.columns(2)
     for idx, l in enumerate(lineas):
         with cols[idx % 2]:
             color_gas = COLOR_GAS_IRAM.get(l["gas"], "#5C6B67")
             cil = l.get("cilindro_actual")
+            disponibles = len([c for c in todos_cilindros if c["gas"] == l["gas"] and c["estado"] == "lleno"])
+            disponibles_html = f"<span style='color:#5C6B67; font-size:0.78rem;'>📦 {disponibles} disponible{'s' if disponibles != 1 else ''} en depósito</span>"
             if cil:
-                info_html = f"<span style='color:#5C6B67; font-size:0.85rem;'>{_etiqueta_cilindro(cil)}</span>"
+                info_html = (
+                    f"<span style='color:#5C6B67; font-size:0.85rem;'>{_etiqueta_cilindro(cil)}</span><br>{disponibles_html}"
+                )
             else:
-                info_html = "<span style='color:#A6362B; font-size:0.85rem;'>Sin cilindro conectado</span>"
+                info_html = (
+                    f"<span style='color:#A6362B; font-size:0.85rem;'>Sin cilindro conectado</span><br>{disponibles_html}"
+                )
 
             tarjeta_html = (
                 f"<div style='border:1px solid #E0E0E0; border-radius:8px; overflow:hidden; margin-bottom:4px;'>"
@@ -362,31 +369,38 @@ def _render_cilindros():
 
     _titulo_seccion_gases("cilindros")
 
-    with st.expander("➕ Nuevo cilindro"):
-        st.caption("Si el tubo ya existía y ya tiene un remito de su última carga, lo podés cargar acá mismo.")
-        c1, c2, c3 = st.columns(3)
-        gas = c1.selectbox("Gas", GASES, key="new_cil_gas")
-        capacidad = c2.selectbox("Capacidad", [7, 9], format_func=lambda v: f"{v} m³", key="new_cil_cap")
-        modalidad = c3.selectbox("Modalidad", ["propio", "alquiler"], format_func=lambda v: MODALIDAD_LABEL[v], key="new_cil_modalidad")
+    if "mostrar_nuevo_cilindro" not in st.session_state:
+        st.session_state.mostrar_nuevo_cilindro = False
+    if st.button("➕ Nuevo cilindro", key="toggle_nuevo_cilindro", use_container_width=True):
+        st.session_state.mostrar_nuevo_cilindro = not st.session_state.mostrar_nuevo_cilindro
 
-        id_interno, proveedor = None, None
-        if modalidad == "propio":
-            id_interno = st.text_input("ID interno del cilindro", key="new_cil_idint")
-        else:
-            proveedor = st.text_input("Proveedor / empresa de alquiler", key="new_cil_prov")
-        remito_inicial = st.text_input("N° de remito actual (opcional)", key="new_cil_remito")
+    if st.session_state.mostrar_nuevo_cilindro:
+        with st.container(border=True):
+            st.caption("Si el tubo ya existía y ya tiene un remito de su última carga, lo podés cargar acá mismo.")
+            c1, c2, c3 = st.columns(3)
+            gas = c1.selectbox("Gas", GASES, key="new_cil_gas")
+            capacidad = c2.selectbox("Capacidad", [7, 9], format_func=lambda v: f"{v} m³", key="new_cil_cap")
+            modalidad = c3.selectbox("Modalidad", ["propio", "alquiler"], format_func=lambda v: MODALIDAD_LABEL[v], key="new_cil_modalidad")
 
-        if st.button("Guardar cilindro", key="new_cil_guardar", type="primary"):
-            dg.add_cilindro(
-                gas, capacidad, modalidad, st.session_state.analista_actual,
-                id_interno=(id_interno.strip() or None) if id_interno else None,
-                proveedor=(proveedor.strip() or None) if proveedor else None,
-                remito=remito_inicial.strip() or None,
-            )
-            for k in ["new_cil_gas", "new_cil_cap", "new_cil_modalidad", "new_cil_idint", "new_cil_prov", "new_cil_remito"]:
-                st.session_state.pop(k, None)
-            _confirmar("✅ Cilindro dado de alta, disponible en depósito.")
-            st.rerun()
+            id_interno, proveedor = None, None
+            if modalidad == "propio":
+                id_interno = st.text_input("ID interno del cilindro", key="new_cil_idint")
+            else:
+                proveedor = st.text_input("Proveedor / empresa de alquiler", key="new_cil_prov")
+            remito_inicial = st.text_input("N° de remito actual (opcional)", key="new_cil_remito")
+
+            if st.button("Guardar cilindro", key="new_cil_guardar", type="primary"):
+                dg.add_cilindro(
+                    gas, capacidad, modalidad, st.session_state.analista_actual,
+                    id_interno=(id_interno.strip() or None) if id_interno else None,
+                    proveedor=(proveedor.strip() or None) if proveedor else None,
+                    remito=remito_inicial.strip() or None,
+                )
+                for k in ["new_cil_gas", "new_cil_cap", "new_cil_modalidad", "new_cil_idint", "new_cil_prov", "new_cil_remito"]:
+                    st.session_state.pop(k, None)
+                st.session_state.mostrar_nuevo_cilindro = False
+                _confirmar("✅ Cilindro dado de alta, disponible en depósito.")
+                st.rerun()
 
     st.caption("Elegí qué grupo querés ver.")
     datos_bulk = dg._todo_para_alertas()
@@ -929,10 +943,26 @@ def _render_accion_rapida(tipo):
     if not gas_elegido:
         st.caption("Elegí el gas.")
         cols = st.columns(2)
-        for idx, gas in enumerate(GASES):
-            if cols[idx % 2].button(gas, key=f"accion_rapida_gas_{gas}", use_container_width=True, type="primary"):
-                st.session_state.gases_accion_gas = gas
-                st.rerun()
+        if tipo == "cambiar":
+            todos_cilindros = dg.get_cilindros()
+            lineas_por_gas = {l["gas"]: l for l in dg.get_lineas()}
+            for idx, gas in enumerate(GASES):
+                linea = lineas_por_gas.get(gas)
+                cil = linea.get("cilindro_actual") if linea else None
+                disponibles = len([c for c in todos_cilindros if c["gas"] == gas and c["estado"] == "lleno"])
+                if cil:
+                    conectado_txt = cil.get("id_interno") or cil.get("proveedor") or "conectado"
+                    etiqueta = f"{gas}\n🔌 {conectado_txt} · 📦 {disponibles} disp."
+                else:
+                    etiqueta = f"{gas}\n⚪ sin conectar · 📦 {disponibles} disp."
+                if cols[idx % 2].button(etiqueta, key=f"accion_rapida_gas_{gas}", use_container_width=True, type="primary"):
+                    st.session_state.gases_accion_gas = gas
+                    st.rerun()
+        else:
+            for idx, gas in enumerate(GASES):
+                if cols[idx % 2].button(gas, key=f"accion_rapida_gas_{gas}", use_container_width=True, type="primary"):
+                    st.session_state.gases_accion_gas = gas
+                    st.rerun()
         return
 
     if st.button("← Elegir otro gas", key="accion_rapida_volver_gas"):
